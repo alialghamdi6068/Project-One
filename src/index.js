@@ -14,11 +14,11 @@ const BACKUP_FILE = path.resolve(config.database.backupFile);
 fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
 
 const defaults = () => ({
-  guilds: {}, warnings: {}, tickets: {}, reminders: [], giveaways: {},
+  schemaVersion: 2, guilds: {}, warnings: {}, tickets: {}, reminders: [], giveaways: {}, finishedGiveaways: {},
   levels: {}, economy: {}, afk: {}, autoreplies: {}
 });
 let db;
-try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = defaults(); }
+try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = defaults(); }\nif (!Number.isInteger(db.schemaVersion) || db.schemaVersion < 2) db.schemaVersion = 2;
 for (const k of Object.keys(defaults())) if (!db[k]) db[k] = defaults()[k];
 
 let saveTimer = null;
@@ -398,7 +398,7 @@ client.on('interactionCreate',async i=>{
 setInterval(async()=>{
   const now=Date.now();
   for(const r of [...db.reminders])if(r.at<=now){const g=client.guilds.cache.get(r.guildId),c=g?.channels.cache.get(r.channelId);if(c?.isTextBased())await c.send('<@'+r.userId+'> تذكير: '+r.text).catch(()=>{});db.reminders=db.reminders.filter(x=>x.id!==r.id);save();}
-  for(const [id,g] of Object.entries(db.giveaways)){if(g.ends<=now){const c=client.channels.cache.get(g.channelId),entries=[...new Set(g.entries)];const winners=[];for(let n=0;n<Math.min(g.winners,entries.length);n++){const idx=Math.floor(Math.random()*entries.length);winners.push(entries.splice(idx,1)[0]);}if(c?.isTextBased())await c.send({embeds:[embed('Giveaway Ended','**Prize:** '+g.prize+'\n**Winners:** '+(winners.length?winners.map(x=>'<@'+x+'>').join(', '):'No valid entries'),config.colors.success)]}).catch(()=>{});delete db.giveaways[id];save();}}
+  for(const [id,g] of Object.entries(db.giveaways)){if(g.ends<=now){const c=client.channels.cache.get(g.channelId),entries=[...new Set(g.entries)];const winners=[];for(let n=0;n<Math.min(g.winners,entries.length);n++){const idx=Math.floor(Math.random()*entries.length);winners.push(entries.splice(idx,1)[0]);}if(c?.isTextBased())await c.send({embeds:[embed('Giveaway Ended','**Prize:** '+g.prize+'\n**Winners:** '+(winners.length?winners.map(x=>'<@'+x+'>').join(', '):'No valid entries'),config.colors.success)]}).catch(()=>{});db.finishedGiveaways??={};db.finishedGiveaways[id]={...g,finishedAt:Date.now()};delete db.giveaways[id];save();}}
 },15000);
 
 process.on('unhandledRejection',e=>console.error('[Unhandled]',e));
