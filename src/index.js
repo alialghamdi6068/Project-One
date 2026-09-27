@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   Client, GatewayIntentBits, Partials, REST, Routes,
-  SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder,
+  SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, AttachmentBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle
 } = require('discord.js');
 const config = require('../config');
@@ -53,8 +53,11 @@ function isStaff(member) {
 function whitelisted(member) {
   if (!member) return false;
   if (owner(member.id)) return true;
-  if (config.protection.whitelistUserIds.includes(member.id)) return true;
-  return config.protection.whitelistRoleIds.some(id => member.roles.cache.has(id));
+  const guildSettings = guildData(member.guild.id).settings;
+  const users = [...config.protection.whitelistUserIds, ...(guildSettings.protectionWhitelist || [])];
+  const roles = [...config.protection.whitelistRoleIds, ...(guildSettings.protectionWhitelistRoles || [])];
+  if (users.includes(member.id)) return true;
+  return roles.some(id => member.roles.cache.has(id));
 }
 function canTarget(actor, target) {
   if (!target || !actor) return false;
@@ -208,7 +211,7 @@ function protectionFor(guild) {
     restore:{...base.restore,...(override.restore||{})}
   };
 }
-function automodFor(guild){ return {...config.automod,...(guildData(guild.id).settings.automod||{})}; }
+function automodFor(guild){ const a=guildData(guild.id).settings.automod||{}; return {...config.automod,...a,duplicate:{...config.automod.duplicate,...(a.duplicate||{})},mentions:{...config.automod.mentions,...(a.mentions||{})},invites:{...config.automod.invites,...(a.invites||{})},links:{...config.automod.links,...(a.links||{})},exceptions:{...config.automod.exceptions,...(a.exceptions||{})}}; }
 function economyFor(guild){ return {...config.economy,...(guildData(guild.id).settings.economy||{})}; }
 function levelFor(guild){ return {...config.levels,...(guildData(guild.id).settings.levels||{})}; }
 
@@ -299,8 +302,8 @@ add(new SlashCommandBuilder().setName('level-reset').setDescription('Reset membe
 
 add(new SlashCommandBuilder().setName('suggestions-stats').setDescription('Suggestion statistics').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild), async i=>{
   const all=Object.values(db.suggestions||{}).filter(x=>x.guildId===i.guild.id);
-  const counts=all.reduce((a,x)=>(a[x.status||'pending']=(a[x.status||'pending']||0)+1,a),{});
-  await i.reply({embeds:[embed('Suggestion Statistics','Total: '+all.length+'\nPending: '+(counts.pending||0)+'\nApproved: '+(counts.approved||0)+'\nRejected: '+(counts.rejected||0))]});
+  const counts=all.reduce((a,x)=>(a[x.status||'pending']=(a[x.status||'pending']||0)+1,a),{}); const up=all.reduce((n,x)=>n+(x.votes?.up?.length||0),0),down=all.reduce((n,x)=>n+(x.votes?.down?.length||0),0);
+  await i.reply({embeds:[embed('Suggestion Statistics','Total: '+all.length+'\nPending: '+(counts.pending||0)+'\nApproved: '+(counts.approved||0)+'\nRejected: '+(counts.rejected||0)+'\n👍 Votes: '+up+'\n👎 Votes: '+down)]});
 });
 
 
@@ -332,6 +335,17 @@ add(new SlashCommandBuilder().setName('automod').setDescription('Configure AutoM
     save();await i.reply('تم حفظ إعدادات AutoMod.');
 });
 
+add(new SlashCommandBuilder().setName('automod-rule').setDescription('Manage AutoMod rules').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('action').setDescription('add/remove/list').setRequired(true).addChoices({name:'add',value:'add'},{name:'remove',value:'remove'},{name:'list',value:'list'}))
+  .addStringOption(o=>o.setName('pattern').setDescription('Word or domain pattern'))
+  .addStringOption(o=>o.setName('type').setDescription('word/domain').addChoices({name:'word',value:'word'},{name:'domain',value:'domain'})), async i=>{
+    const s=guildData(i.guild.id).settings;s.automod??={};s.automod.rules??=[];const action=i.options.getString('action');
+    if(action==='list')return i.reply({embeds:[embed('AutoMod Rules',s.automod.rules.length?s.automod.rules.map((r,n)=>'**'+(n+1)+'** '+r.type+': '+r.pattern).join('\n'):'لا توجد قواعد.') ]});
+    const pattern=i.options.getString('pattern')?.trim(),type=i.options.getString('type')||'word';if(!pattern)return commandError(i,'حدد pattern.');
+    if(action==='add'){if(!s.automod.rules.some(r=>r.type===type&&r.pattern.toLowerCase()===pattern.toLowerCase()))s.automod.rules.push({id:Date.now().toString(36),type,pattern,enabled:true});}
+    else s.automod.rules=s.automod.rules.filter(r=>r.pattern.toLowerCase()!==pattern.toLowerCase());
+    save();await i.reply('تم تحديث قواعد AutoMod.');
+});
 add(new SlashCommandBuilder().setName('autoreply-remove').setDescription('Remove an autoreply').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addStringOption(o=>o.setName('trigger').setDescription('Trigger').setRequired(true)), async i=>{
     const s=guildData(i.guild.id).settings;s.autoreplies??=[];const before=s.autoreplies.length;s.autoreplies=s.autoreplies.filter(x=>x.trigger!==i.options.getString('trigger'));
@@ -362,6 +376,17 @@ add(new SlashCommandBuilder().setName('schedule-cancel').setDescription('Cancel 
     await i.reply(before===gd.scheduled.length?'الجدولة غير موجودة.':'تم إلغاء الجدولة.');
 });
 
+add(new SlashCommandBuilder().setName('level-reward-remove').setDescription('Remove a level reward').setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addIntegerOption(o=>o.setName('level').setDescription('Level').setMinValue(1).setMaxValue(1000).setRequired(true)), async i=>{
+    const gd=guildData(i.guild.id);gd.levelRewards??={};delete gd.levelRewards[String(i.options.getInteger('level'))];save();await i.reply('تم حذف مكافأة المستوى.');
+});
+add(new SlashCommandBuilder().setName('economy-admin').setDescription('Manage member balance').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('action').setDescription('set/add/remove').setRequired(true).addChoices({name:'set',value:'set'},{name:'add',value:'add'},{name:'remove',value:'remove'}))
+  .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount').setMinValue(0).setRequired(true)), async i=>{
+    const eco=economyFor(i.guild),u=i.options.getUser('user'),amount=i.options.getInteger('amount'),k=i.guild.id+':'+u.id;
+    await withLock('eco:'+i.guild.id,async()=>{db.economy[k]??={balance:eco.startingBalance,lastDaily:0,transactions:[]};const d=db.economy[k];const a=i.options.getString('action');if(a==='set')d.balance=amount;else if(a==='add')d.balance+=amount;else d.balance=Math.max(0,d.balance-amount);d.transactions??=[];d.transactions.push({id:Date.now().toString(36),at:Date.now(),admin:i.user.id,action:a,amount});d.transactions=d.transactions.slice(-50);save();});
+    await i.reply('تم تحديث الرصيد.');
+});
 add(new SlashCommandBuilder().setName('level-reward').setDescription('Set a level reward role').setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
   .addIntegerOption(o=>o.setName('level').setDescription('Level').setMinValue(1).setMaxValue(1000).setRequired(true))
   .addRoleOption(o=>o.setName('role').setDescription('Reward role').setRequired(true)), async i=>{
@@ -372,7 +397,7 @@ const ticketButtons = type => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('ticket:create:'+type).setLabel({support:'Support',bug:'Bug Report',partnership:'Partnership',developer:'Developer Support'}[type]).setEmoji({support:'🎫',bug:'🐛',partnership:'🤝',developer:'🛠️'}[type]).setStyle(ButtonStyle.Primary)
 );
 add(new SlashCommandBuilder().setName('ticket-add').setDescription('Add a member to the current ticket').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)), async i=>{
-  const d=db.tickets[i.channel.id]; if(!d)return commandError(i,'هذه ليست تذكرة مسجلة.');
+  const d=db.tickets[i.channel.id]; if(!d||d.status!=='open')return commandError(i,'هذه ليست تذكرة مفتوحة.');
   const m=await fetchMember(i.guild,i.options.getUser('user').id); if(!m)return commandError(i,'العضو غير موجود.');
   await i.channel.permissionOverwrites.edit(m,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true}); await i.reply('تمت إضافة العضو للتذكرة.'); await sendLog(i.guild,'ticket',i.user.tag+' added '+m.user.tag+' to '+i.channel.name);
 });
@@ -422,7 +447,11 @@ add(new SlashCommandBuilder().setName('suggest').setDescription('Send a suggesti
   db.suggestions??={};
   const id=Date.now().toString(36)+Math.random().toString(36).slice(2,8);
   db.suggestions[id]={id,guildId:i.guild.id,channelId:c.id,authorId:i.user.id,text:i.options.getString('text'),status:'pending',votes:{up:[],down:[]},voters:{}};
-  const row=config.suggestions.approvalButtons?[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('suggest:up:'+id).setLabel('Approve').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('suggest:down:'+id).setLabel('Reject').setStyle(ButtonStyle.Danger))]:[];
+  const row=[new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('suggest:vote-up:'+id).setLabel('👍 0').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('suggest:vote-down:'+id).setLabel('👎 0').setStyle(ButtonStyle.Secondary),
+    ...(config.suggestions.approvalButtons?[new ButtonBuilder().setCustomId('suggest:approve:'+id).setLabel('Approve').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('suggest:reject:'+id).setLabel('Reject').setStyle(ButtonStyle.Danger)]:[])
+  )];
   const msg=await c.send({embeds:[embed('New Suggestion','**From:** '+i.user+'\n\n'+i.options.getString('text'))],components:row});
   db.suggestions[id].messageId=msg.id;save();await i.reply({content:'تم إرسال الاقتراح.',ephemeral:true});
 });
@@ -439,7 +468,7 @@ add(new SlashCommandBuilder().setName('level').setDescription('Show your level')
   const u=i.options.getUser('user')||i.user,k=i.guild.id+':'+u.id,d=db.levels[k]||{xp:0,level:0};await i.reply({embeds:[embed('Level',u+'\n**Level:** '+d.level+'\n**XP:** '+d.xp)]});
 });
 add(new SlashCommandBuilder().setName('balance').setDescription('Show balance').addUserOption(o=>o.setName('user').setDescription('User')), async i=>{
-  const u=i.options.getUser('user')||i.user,k=i.guild.id+':'+u.id;db.economy[k]??={balance:0,lastDaily:0};save();await i.reply('**'+u.tag+'** has **'+db.economy[k].balance+' '+config.economy.currency+'**.');
+  const u=i.options.getUser('user')||i.user,k=i.guild.id+':'+u.id;db.economy[k]??={balance:0,lastDaily:0};save();const eco=economyFor(i.guild); db.economy[k]??={balance:eco.startingBalance,lastDaily:0,transactions:[]}; await i.reply('**'+u.tag+'** has **'+db.economy[k].balance+' '+eco.currency+'**.');
 });
 add(new SlashCommandBuilder().setName('daily').setDescription('Claim daily credits'), async i=>{
   const k=i.guild.id+':'+i.user.id,eco=economyFor(i.guild);db.economy[k]??={balance:eco.startingBalance,lastDaily:0,transactions:[]};if(Date.now()-db.economy[k].lastDaily<eco.dailyCooldownMs)return commandError(i,'استلمت مكافأتك اليومية مسبقًا.');db.economy[k].balance+=eco.dailyAmount;db.economy[k].lastDaily=Date.now();save();await i.reply('تمت إضافة **'+eco.dailyAmount+' '+eco.currency+'** إلى رصيدك.');
@@ -457,7 +486,7 @@ add(new SlashCommandBuilder().setName('giveaway-end').setDescription('End a give
   'مساعدة':'help','اوامر':'help','بنج':'ping','معلومات':'server','باند':'ban','حظر':'ban','كيك':'kick','طرد':'kick',
   'تحذير':'warn','تحذيرات':'warnings','مسح':'clear','قفل':'lock','فتح':'unlock','سلو':'slowmode','تكت':'ticket-panel',
   'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','اعدادات':'settings','معلومات-البوت':'bot-info','قائمة-التذكيرات':'reminders','الغاء-التذكير':'remind-cancel','انهاء-السحب':'giveaway-end','اعادة-السحب':'giveaway-reroll','الغاء-السحب':'giveaway-cancel','لوق':'log-channel','اقتراحات':'suggest-channel','وداع':'goodbye','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
-  'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role','توب':'leaderboard','توب-فلوس':'economy-top','اوتومود':'automod','حذف-رد':'autoreply-remove','ردود':'autoreply-list','حماية-اعدادات':'protection-config','جدولة':'schedule','المجدول':'scheduled','الغاء-جدولة':'schedule-cancel','مكافاة-لفل':'level-reward'
+  'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role','توب':'leaderboard','توب-فلوس':'economy-top','اوتومود':'automod','حذف-رد':'autoreply-remove','ردود':'autoreply-list','حماية-اعدادات':'protection-config','جدولة':'schedule','المجدول':'scheduled','الغاء-جدولة':'schedule-cancel','مكافاة-لفل':'level-reward','حذف-مكافاة-لفل':'level-reward-remove','اقتصاد-ادمن':'economy-admin','قاعدة-اوتومود':'automod-rule'
 };
 
 const client=new Client({
@@ -516,8 +545,15 @@ client.on('roleUpdate',async(oldRole,newRole)=>{
   await sendLog(newRole.guild,'role','Role updated: '+newRole.name);
 });
 client.on('roleDelete',r=>{if(r.guild){antiNuke(r.guild,32,r.id,'ROLE_DELETE');sendLog(r.guild,'role','Role deleted: '+r.name,config.colors.warning);}});
+client.on('channelUpdate',async(a,b)=>{if(!b.guild)return; if(a.name!==b.name||a.topic!==b.topic)await antiNuke(b.guild,11,b.id,'CHANNEL_UPDATE');await sendLog(b.guild,'channel','Channel updated: #'+b.name);});
+client.on('guildUpdate',async(a,b)=>{await antiNuke(b,1,b.id,'GUILD_UPDATE');await sendLog(b,'server','Server settings/name updated.',config.colors.warning);});
+client.on('guildAuditLogEntryCreate',async(entry,guild)=>{
+  const map={50:'WEBHOOK_CREATE',52:'WEBHOOK_DELETE'};
+  const label=map[entry.actionType];
+  if(label){await antiNuke(guild,entry.actionType,entry.targetId,label);await sendLog(guild,'webhook','Webhook audit event: '+label,config.colors.warning);}
+});
 client.on('guildMemberRemove',async m=>{if(!m.guild)return;const gd=guildData(m.guild.id),p=protectionFor(m.guild),key=m.guild.id+':'+m.user.id+':MEMBER_KICK',now=Date.now();const arr=(auditActors.get(key)||[]).filter(t=>now-t<p.antiNuke.windowMs);const actor=await actorFromAudit(m.guild,20,m.user.id);if(actor&&actor.id!==client.user.id){const am=await fetchMember(m.guild,actor.id);if(!actorAllowed(am)){arr.push(now);auditActors.set(key,arr);if(arr.length>=p.antiNuke.maxActions){await punish(am,p.antiNuke.action,'Anti-Nuke: MEMBER_KICK').catch(()=>{});auditActors.delete(key);await sendLog(m.guild,'protection','Anti-Nuke triggered against '+actor.tag+' for MEMBER_KICK',config.colors.danger);}}}});
-client.on('webhookUpdate',async c=>{if(c.guild){await antiNuke(c.guild,50,null,'WEBHOOK_CREATE');await sendLog(c.guild,'webhook','Webhook activity detected in #'+c.name,config.colors.warning);}});
+client.on('webhooksUpdate',async c=>{if(c.guild)await sendLog(c.guild,'webhook','Webhook configuration changed in #'+c.name,config.colors.warning);});
 client.on('guildBanAdd',async b=>{await antiNuke(b.guild,22,b.user.id,'MEMBER_BAN_ADD');});
 client.on('messageDelete',async m=>{if(m.guild)await sendLog(m.guild,'messageDelete','Message deleted in #'+(m.channel?.name||'unknown')+(m.author?' by '+m.author.tag:''),config.colors.warning);});
 client.on('messageUpdate',async(a,b)=>{if(b.guild&&a.content!==b.content)await sendLog(b.guild,'messageUpdate','Message edited in #'+(b.channel?.name||'unknown'),config.colors.warning);});
@@ -532,14 +568,15 @@ client.on('messageCreate',async m=>{
   const s=guildData(m.guild.id).settings;
   const rules=s.autoreplies||config.autoreply.rules;
   const hit=rules.find(x=>m.content.toLowerCase().includes(String(x.trigger).toLowerCase()));if(hit)await m.reply(hit.reply).catch(()=>{});
-  if(config.protection.enabled&&config.protection.spam.enabled&&!whitelisted(m.member)){
-    const a=(spam.get(key)||[]).filter(t=>now-t<config.protection.spam.windowMs);a.push(now);spam.set(key,a);
-    if(a.length>=config.protection.spam.maxMessages){await m.member.timeout(config.protection.spam.timeoutMs,'Anti-Spam').catch(()=>{});await m.delete().catch(()=>{});spam.delete(key);await sendLog(m.guild,'protection','Anti-Spam action against '+m.author.tag,config.colors.warning);return;}
+  const protection=protectionFor(m.guild);
+  if(protection.enabled&&protection.spam.enabled&&!whitelisted(m.member)){
+    const a=(spam.get(key)||[]).filter(t=>now-t<protection.spam.windowMs);a.push(now);spam.set(key,a);
+    if(a.length>=protection.spam.maxMessages){await m.member.timeout(protection.spam.timeoutMs,'Anti-Spam').catch(()=>{});await m.delete().catch(()=>{});spam.delete(key);await sendLog(m.guild,'protection','Anti-Spam action against '+m.author.tag,config.colors.warning);return;}
   }
-  if(config.protection.enabled&&!whitelisted(m.member)){
-    if(config.protection.mentions.enabled&&m.mentions.users.size>config.protection.mentions.maxMentions){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Mass mention blocked from '+m.author.tag,config.colors.warning);return;}
-    if(config.protection.links.enabled&&config.protection.links.blockInvites&&/discord\.gg\/|discord\.com\/invite\//i.test(m.content)){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Discord invite blocked from '+m.author.tag,config.colors.warning);return;}
-    if(config.protection.caps.enabled&&m.content.length>=config.protection.caps.minimumLength){const letters=m.content.replace(/[^A-Za-z]/g,''),upper=letters.replace(/[^A-Z]/g,'');if(letters.length&&upper.length/letters.length>=config.protection.caps.threshold){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Excessive caps blocked from '+m.author.tag,config.colors.warning);return;}}
+  if(protection.enabled&&!whitelisted(m.member)){
+    if(protection.mentions.enabled&&m.mentions.users.size>protection.mentions.maxMentions){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Mass mention blocked from '+m.author.tag,config.colors.warning);return;}
+    if(protection.links.enabled&&protection.links.blockInvites&&/discord\.gg\/|discord\.com\/invite\//i.test(m.content)){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Discord invite blocked from '+m.author.tag,config.colors.warning);return;}
+    if(protection.caps.enabled&&m.content.length>=protection.caps.minimumLength){const letters=m.content.replace(/[^A-Za-z]/g,''),upper=letters.replace(/[^A-Z]/g,'');if(letters.length&&upper.length/letters.length>=protection.caps.threshold){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Excessive caps blocked from '+m.author.tag,config.colors.warning);return;}}
   }
   const am=automodFor(m.guild);
   const ex=am.exceptions||{};
@@ -550,10 +587,13 @@ client.on('messageCreate',async m=>{
     const recent=(spam.get(dupKey)||[]).filter(x=>now-x.at<(am.duplicate?.windowMs||10000));
     recent.push({at:now,content:m.content.trim().toLowerCase()}); spam.set(dupKey,recent);
     const same=recent.filter(x=>x.content===m.content.trim().toLowerCase()).length;
-    const hit=rules.some(w=>m.content.toLowerCase().includes(String(w).toLowerCase()))
+    const lower=m.content.toLowerCase();
+    const blockedDomain=(am.links?.enabled&&Array.isArray(am.links.blockedDomains)&&am.links.blockedDomains.some(d=>lower.includes(String(d).toLowerCase())));
+    const hit=rules.some(w=>lower.includes(String(w).toLowerCase()))
       || (am.duplicate?.enabled&&same>=(am.duplicate.max||3))
       || (am.mentions?.enabled&&m.mentions.users.size>(am.mentions.max||8))
-      || (am.invites?.enabled&&/discord\.gg\/|discord\.com\/invite\//i.test(m.content));
+      || (am.invites?.enabled&&/discord\.gg\/|discord\.com\/invite\//i.test(m.content))
+      || blockedDomain;
     if(hit){
       if(am.deleteMessages!==false)await m.delete().catch(()=>{});
       if(am.warnOnViolation){
@@ -565,10 +605,11 @@ client.on('messageCreate',async m=>{
       await sendLog(m.guild,'automod','AutoMod blocked content from '+m.author.tag,config.colors.warning);return;
     }
   }
-  if(config.levels.enabled){const k=m.guild.id+':'+m.author.id,d=db.levels[k]??{xp:0,level:0,last:0};if(now-d.last>=config.levels.cooldownMs){const oldLevel=d.level;d.xp+=config.levels.xpPerMessage;d.last=now;const next=(d.level+1)*100;if(d.xp>=next)d.level++;db.levels[k]=d;save();if(d.level>oldLevel){const roleId=guildData(m.guild.id).levelRewards?.[d.level];if(roleId)await m.member.roles.add(roleId).catch(()=>{});}}}
+  const levels=levelFor(m.guild);
+  if(levels.enabled){const k=m.guild.id+':'+m.author.id,d=db.levels[k]??{xp:0,level:0,last:0};if(now-d.last>=levels.cooldownMs){const oldLevel=d.level;d.xp+=levels.xpPerMessage;d.last=now;while(d.xp>=(d.level+1)*(levels.xpPerLevel||100))d.level++;db.levels[k]=d;save();if(d.level>oldLevel){const rewards=guildData(m.guild.id).levelRewards||{};const roleId=rewards[String(d.level)]||levels.rewards?.[String(d.level)];if(roleId)await m.member.roles.add(roleId).catch(()=>{});}}}
   if(!m.content.startsWith(config.bot.prefix))return;
   const parts=m.content.slice(config.bot.prefix.length).trim().split(/\s+/),raw=(parts.shift()||'').toLowerCase(),name=aliases[raw]||raw,c=commands.find(x=>x.data.name===name);if(!c)return;
-  const required={settings:'Administrator','log-channel':'ManageGuild','suggest-channel':'ManageGuild',goodbye:'ManageGuild','autorole-remove':'ManageRoles','bot-info':null,reminders:null,'giveaway-end':'ManageGuild','giveaway-reroll':'ManageGuild','giveaway-cancel':'ManageGuild','automod':'ManageGuild','autoreply-remove':'ManageGuild','autoreply-list':'ManageGuild','remind-cancel':null,'leaderboard':null,'economy-top':null,'protection-config':'Administrator','schedule':'ManageMessages','scheduled':'ManageMessages','schedule-cancel':'ManageMessages','level-reward':'ManageRoles','protection-whitelist':'Administrator',ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
+  const required={settings:'Administrator','log-channel':'ManageGuild','suggest-channel':'ManageGuild',goodbye:'ManageGuild','autorole-remove':'ManageRoles','bot-info':null,reminders:null,'giveaway-end':'ManageGuild','giveaway-reroll':'ManageGuild','giveaway-cancel':'ManageGuild','automod':'ManageGuild','autoreply-remove':'ManageGuild','autoreply-list':'ManageGuild','remind-cancel':null,'leaderboard':null,'economy-top':null,'protection-config':'Administrator','protection-restore':'Administrator','schedule':'ManageMessages','scheduled':'ManageMessages','schedule-cancel':'ManageMessages','level-reward':'ManageRoles','level-reward-remove':'ManageRoles','economy-admin':'ManageGuild','automod-rule':'ManageGuild','protection-whitelist':'Administrator',ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
   const custom=config.commands.customPermissions?.[name]; if(custom&&!m.member.permissions.has(custom)&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.'); if(required[name]&&!m.member.permissions.has(PermissionFlagsBits[required[name]])&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.');
   const target=parts[0]?await fetchMember(m.guild,parts[0]):null;
   const fake={guild:m.guild,channel:m.channel,user:m.author,member:m.member,client,options:{
@@ -580,7 +621,7 @@ client.on('messageCreate',async m=>{
 
 async function createTicket(i,type){ if(!ticketConfiguredType(type))return commandError(i,'نوع التذكرة غير مفعّل.');
   const busyKey=i.guild.id+':'+i.user.id;if(ticketBusy.has(busyKey))return commandError(i,'جاري إنشاء تذكرتك، انتظر لحظة.');ticketBusy.add(busyKey);try{
-  const gd=guildData(i.guild.id);const existing=i.guild.channels.cache.find(c=>c.topic?.includes('ticket-owner:'+i.user.id)&&c.topic?.includes('ticket-status:open'));const openCount=i.guild.channels.cache.filter(c=>c.topic?.includes('ticket-owner:'+i.user.id)&&c.topic?.includes('ticket-status:open')).size;if(openCount>=(config.tickets.maxOpenPerUser||1))return commandError(i,'عندك الحد الأقصى من التذاكر المفتوحة.');
+  const gd=guildData(i.guild.id);const openCount=i.guild.channels.cache.filter(c=>c.topic?.includes('ticket-owner:'+i.user.id)&&c.topic?.includes('ticket-status:open')).size;if(openCount>=(config.tickets.maxOpenPerUser||1))return commandError(i,'عندك الحد الأقصى من التذاكر المفتوحة.');
   gd.ticketCounter++;const name=config.tickets.naming.replace('{number}',String(gd.ticketCounter)).replace('{user}',i.user.username).replace('{type}',type).slice(0,90);
   const ow=[{id:i.guild.roles.everyone.id,deny:['ViewChannel']},{id:i.user.id,allow:['ViewChannel','SendMessages','ReadMessageHistory','AttachFiles']}];if(config.tickets.staffRoleId)ow.push({id:config.tickets.staffRoleId,allow:['ViewChannel','SendMessages','ReadMessageHistory','ManageMessages']});
   const ch=await i.guild.channels.create({name,type:ChannelType.GuildText,parent:config.tickets.categoryId||undefined,topic:'ticket-owner:'+i.user.id+';ticket-type:'+type+';ticket-status:open;ticket-number:'+gd.ticketCounter,permissionOverwrites:ow});db.tickets[ch.id]={guildId:i.guild.id,channelId:ch.id,ownerId:i.user.id,type,status:'open',number:gd.ticketCounter,created:Date.now(),lastActivity:Date.now(),claimedBy:null};save();
@@ -616,16 +657,46 @@ client.on('interactionCreate',async i=>{
     if(i.customId==='ticket:reopen'){const d=db.tickets[i.channel.id];if(!d)return commandError(i,'بيانات التذكرة غير موجودة.');const m=await fetchMember(i.guild,d.ownerId);if(m)await i.channel.permissionOverwrites.edit(m,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true}).catch(()=>{});d.status='open';await i.channel.setTopic(ticketTopic(d)).catch(()=>{});save();return i.reply({embeds:[embed('Ticket Reopened','تمت إعادة فتح التذكرة.',config.colors.success)]});}
     if(i.customId==='ticket:claim'){const d=db.tickets[i.channel.id];if(!d||!isTicketStaff(i))return commandError(i,'استلام التذكرة متاح للستاف فقط.');d.claimedBy=i.user.id;save();return i.reply({embeds:[embed('Ticket Claimed','تم استلام التذكرة بواسطة '+i.user+'.',config.colors.success)]});}
     if(i.customId==='ticket:delete'){if(!db.tickets[i.channel.id])return commandError(i,'هذه ليست تذكرة مسجلة.');if(!i.member.permissions.has(PermissionFlagsBits.ManageChannels)&&!owner(i.user.id))return commandError(i,'حذف التذكرة متاح للإدارة فقط.');const t=await transcript(i.channel);if(t)await sendTranscriptLog(i.guild,i.channel.name,t);await i.reply('سيتم حذف التذكرة...');setTimeout(()=>i.channel.delete().catch(()=>{}),800);return;}
-    if(i.customId==='giveaway:join'){const msg=db.giveaways[i.message.id];if(!msg)return commandError(i,'السحب غير موجود.');if(!msg.entries.includes(i.user.id))msg.entries.push(i.user.id);save();return i.reply({content:'تم تسجيل دخولك في السحب.',ephemeral:true});}
+    if(i.customId==='giveaway:join'){
+  const msg=db.giveaways[i.message.id];
+  if(!msg)return commandError(i,'السحب غير موجود.');
+  if(msg.ends<=Date.now())return commandError(i,'انتهى السحب.');
+  const age=config.giveaways.minAccountAgeMs||0;
+  if(age>0 && Date.now()-i.user.createdTimestamp<age)return commandError(i,'حسابك لا يحقق الحد الأدنى لعمر الحساب.');
+  if(config.giveaways.minMembers>0 && i.guild.memberCount<config.giveaways.minMembers)return commandError(i,'السيرفر لا يحقق الحد الأدنى المطلوب.');
+  msg.entries??=[];
+  if(msg.entries.includes(i.user.id))return commandError(i,'أنت مسجل بالفعل في السحب.');
+  msg.entries.push(i.user.id);save();
+  return i.reply({content:'تم تسجيل دخولك في السحب.',ephemeral:true});
+}
     if(i.customId.startsWith('suggest:')){
       const [,action,id]=i.customId.split(':');db.suggestions??={};const d=db.suggestions[id];
       if(!d)return commandError(i,'الاقتراح غير موجود.');
-      if(d.status!=='pending')return commandError(i,'الاقتراح مغلق.');
-      const staff=hasGuildPermission(i.member,PermissionFlagsBits.ManageGuild)||(config.suggestions.staffRoleId&&i.member.roles.cache.has(config.suggestions.staffRoleId));
-      if(!staff)return commandError(i,'هذا الإجراء متاح للإدارة فقط.');
-      d.status=action==='up'?'approved':'rejected';d.reviewedBy=i.user.id;d.reviewedAt=Date.now();save();
-      await i.message.edit({components:[]}).catch(()=>{});
-      return i.reply({content:'تم تحديث حالة الاقتراح.',ephemeral:true});
+      if(action==='vote-up'||action==='vote-down'){
+        if(d.status!=='pending')return commandError(i,'الاقتراح مغلق.');
+        d.voters??={}; if(d.voters[i.user.id])return commandError(i,'سبق لك التصويت.');
+        d.voters[i.user.id]=action==='vote-up'?'up':'down';d.votes??={up:[],down:[]};
+        d.votes[action==='vote-up'?'up':'down'].push(i.user.id);save();
+        const row=new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('suggest:vote-up:'+id).setLabel('👍 '+d.votes.up.length).setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('suggest:vote-down:'+id).setLabel('👎 '+d.votes.down.length).setStyle(ButtonStyle.Secondary),
+          ...(config.suggestions.approvalButtons?[new ButtonBuilder().setCustomId('suggest:approve:'+id).setLabel('Approve').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('suggest:reject:'+id).setLabel('Reject').setStyle(ButtonStyle.Danger)]:[])
+        );
+        await i.message.edit({components:[row]}).catch(()=>{});
+        return i.reply({content:'تم تسجيل تصويتك.',ephemeral:true});
+      }
+      if(action==='approve'||action==='reject'){
+        const staff=hasGuildPermission(i.member,PermissionFlagsBits.ManageGuild)||(config.suggestions.staffRoleId&&i.member.roles.cache.has(config.suggestions.staffRoleId));
+        if(!staff)return commandError(i,'هذا الإجراء متاح للإدارة فقط.');
+        if(d.status!=='pending')return commandError(i,'الاقتراح مغلق.');
+        d.status=action==='approve'?'approved':'rejected';d.reviewedBy=i.user.id;d.reviewedAt=Date.now();save();
+        const row=new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('suggest:vote-up:'+id).setLabel('👍 '+(d.votes?.up?.length||0)).setStyle(ButtonStyle.Primary).setDisabled(true),
+          new ButtonBuilder().setCustomId('suggest:vote-down:'+id).setLabel('👎 '+(d.votes?.down?.length||0)).setStyle(ButtonStyle.Secondary).setDisabled(true)
+        );
+        await i.message.edit({components:[row]}).catch(()=>{});
+        return i.reply({content:'تم تحديث حالة الاقتراح.',ephemeral:true});
+      }
     }
   }catch(e){console.error('[Interaction]',e);await commandError(i,'حدث خطأ أثناء تنفيذ العملية.').catch(()=>{});}
 });
@@ -634,10 +705,27 @@ setInterval(()=>Promise.all(client.guilds.cache.map(g=>takeSnapshot(g))),60000);
 
 setInterval(async()=>{
   const now=Date.now();
-  for(const gd of Object.values(db.guilds)){for(const s of [...(gd.scheduled||[])])if(s.at<=now){const c=client.channels.cache.get(s.channelId);if(c?.isTextBased())await c.send(s.message).catch(()=>{});gd.scheduled=gd.scheduled.filter(x=>x.id!==s.id);save();}}
+  for(const [id,d] of Object.entries(db.tickets||{})){
+    if(d.status!=='open'||!config.tickets.inactivityMs||now-(d.lastActivity||d.created)>config.tickets.inactivityMs)continue;
+    const ch=client.channels.cache.get(d.channelId);
+    if(!ch?.isTextBased())continue;
+    d.status='closed';d.closedAt=now;await ch.setTopic(ticketTopic(d)).catch(()=>{});
+    const ownerMember=await fetchMember(ch.guild,d.ownerId);if(ownerMember)await ch.permissionOverwrites.edit(ownerMember,{ViewChannel:false,SendMessages:false}).catch(()=>{});
+    await ch.send({embeds:[embed('Ticket Auto-Closed','تم إغلاق التذكرة تلقائيًا بسبب عدم النشاط.',config.colors.warning)]}).catch(()=>{});
+    save();
+  }
+  for(const [gid,times] of joins){const p=protectionFor(client.guilds.cache.get(gid)||{id:gid});if(!times.length)continue;if(Date.now()-times[times.length-1]>(p.raid.windowMs||10000)){const gd=db.guilds[gid];if(gd?.settings?.raidMode){gd.settings.raidMode=false;save();}}}
+
+  for(const gd of Object.values(db.guilds)){for(const s of [...(gd.scheduled||[])])if(s.at<=now&&!s.running){s.running=true;const c=client.channels.cache.get(s.channelId);if(c?.isTextBased())await c.send(s.message).catch(()=>{});gd.scheduled=gd.scheduled.filter(x=>x.id!==s.id);save();}}
   for(const r of [...db.reminders])if(r.at<=now){const g=client.guilds.cache.get(r.guildId),c=g?.channels.cache.get(r.channelId);if(c?.isTextBased())await c.send('<@'+r.userId+'> تذكير: '+r.text).catch(()=>{});db.reminders=db.reminders.filter(x=>x.id!==r.id);save();}
-  for(const [id,g] of Object.entries(db.giveaways)){if(g.ends<=now){const c=client.channels.cache.get(g.channelId),entries=[...new Set(g.entries)];const winners=[];for(let n=0;n<Math.min(g.winners,entries.length);n++){const idx=Math.floor(Math.random()*entries.length);winners.push(entries.splice(idx,1)[0]);}if(c?.isTextBased())await c.send({embeds:[embed('Giveaway Ended','**Prize:** '+g.prize+'\n**Winners:** '+(winners.length?winners.map(x=>'<@'+x+'>').join(', '):'No valid entries'),config.colors.success)]}).catch(()=>{});db.finishedGiveaways??={};db.finishedGiveaways[id]={...g,finishedAt:Date.now()};delete db.giveaways[id];save();}}
+  for(const [id,g] of Object.entries(db.giveaways)){if(g.ends<=now){const c=client.channels.cache.get(g.channelId),entries=[...new Set(g.entries)];const winners=[];for(let n=0;n<Math.min(g.winners,entries.length);n++){const idx=Math.floor(Math.random()*entries.length);winners.push(entries.splice(idx,1)[0]);}if(c?.isTextBased())await c.send({embeds:[embed('Giveaway Ended','**Prize:** '+g.prize+'\n**Winners:** '+(winners.length?winners.map(x=>'<@'+x+'>').join(', '):'No valid entries'),config.colors.success)]}).catch(()=>{});db.finishedGiveaways??={};db.finishedGiveaways[id]={...g,winners,finishedAt:Date.now(),status:'finished'}; if(c?.isTextBased()){const original=await c.messages.fetch(id).catch(()=>null);if(original)await original.edit({components:[],embeds:[embed('Giveaway Ended','**Prize:** '+g.prize+'\n**Winners:** '+(winners.length?winners.map(x=>'<@'+x+'>').join(', '):'No valid entries'),config.colors.success)]}).catch(()=>{});} delete db.giveaways[id];save();}}
 },15000);
+
+async function shutdown(signal){
+  try { save(); if(saveTimer) await new Promise(r=>setTimeout(r,150)); } finally { client.destroy(); process.exit(0); }
+}
+process.once('SIGINT',()=>shutdown('SIGINT'));
+process.once('SIGTERM',()=>shutdown('SIGTERM'));
 
 process.on('unhandledRejection',e=>console.error('[Unhandled]',e));
 process.on('uncaughtException',e=>console.error('[Uncaught]',e));
@@ -646,7 +734,11 @@ if(!process.env.DISCORD_TOKEN){console.error('Missing DISCORD_TOKEN');process.ex
 function dbValidate(){
   db.guilds??={};db.warnings??={};db.tickets??={};db.suggestions??={};db.giveaways??={};db.finishedGiveaways??={};
   db.reminders??=[];db.economy??={};db.levels??={};db.schemaVersion??=2;
-  for(const [id,d] of Object.entries(db.tickets)) if(!d.guildId||!d.ownerId||!d.status) delete db.tickets[id];
+  for(const [id,d] of Object.entries(db.tickets)) if(!d.guildId||!d.ownerId||!['open','closed'].includes(d.status)) delete db.tickets[id];
+  for(const d of Object.values(db.tickets)) { d.lastActivity??=d.created||Date.now(); d.claimedBy??=null; }
+  for(const d of Object.values(db.giveaways)) d.entries??=[];
+  for(const d of Object.values(db.finishedGiveaways)) d.entries??=[];
+  for(const d of Object.values(db.suggestions)) { d.votes??={up:[],down:[]}; d.voters??={}; }
 }
 dbValidate();
 
@@ -656,15 +748,6 @@ function ticketConfiguredType(type){
   return Array.isArray(config.tickets.types)&&config.tickets.types.includes(type);
 }
 
-function ticketState(d, expected){
-  return !!d && d.status===expected;
-}
-
-async function updateTicketMessage(ch,d,title,description){
-  const m=await ch.messages.fetch({limit:20}).catch(()=>null);
-  const botMsg=m?.find(x=>x.author.id===client.user.id);
-  if(botMsg) await botMsg.edit({embeds:[embed(title,description)],components:d.status==='open'?[ticketButtons(d.type)]:[]}).catch(()=>{});
-}
 
 
 client.login(process.env.DISCORD_TOKEN);
