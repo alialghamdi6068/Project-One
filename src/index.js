@@ -437,11 +437,11 @@ client.on('guildMemberAdd',async m=>{
 });
 client.on('guildMemberRemove',async m=>{const s=guildData(m.guild.id).settings;if(s.goodbyeEnabled??config.goodbye.enabled){const c=m.guild.channels.cache.get(s.goodbyeChannelId||config.goodbye.channelId);if(c?.isTextBased())await c.send((s.goodbyeMessage||config.goodbye.message).replaceAll('{user}',m.user.toString()).replaceAll('{server}',m.guild.name)).catch(()=>{});}await sendLog(m.guild,'memberLeave','Member left: '+m.user.tag);});
 client.on('guildMemberUpdate',async(a,b)=>{if(a.roles.cache.size!==b.roles.cache.size)await sendLog(b.guild,'memberUpdate','Roles changed for '+b.user.tag);});
-client.on('channelCreate',c=>{if(c.guild)sendLog(c.guild,'channel','Channel created: #'+c.name);});
+client.on('channelCreate',async c=>{if(c.guild){await antiNuke(c.guild,10,c.id,'CHANNEL_CREATE');await sendLog(c.guild,'channel','Channel created: #'+c.name);}});
 client.on('channelDelete',c=>{if(c.guild){antiNuke(c.guild,12,c.id,'CHANNEL_DELETE');sendLog(c.guild,'channel','Channel deleted: #'+c.name,config.colors.warning);}});
-client.on('roleCreate',r=>{if(r.guild){sendLog(r.guild,'role','Role created: '+r.name);}});
+client.on('roleCreate',async r=>{if(r.guild){await antiNuke(r.guild,30,r.id,'ROLE_CREATE');await sendLog(r.guild,'role','Role created: '+r.name);}});
 client.on('roleDelete',r=>{if(r.guild){antiNuke(r.guild,32,r.id,'ROLE_DELETE');sendLog(r.guild,'role','Role deleted: '+r.name,config.colors.warning);}});
-client.on('guildMemberRemove',async m=>{if(!m.guild)return;const gd=guildData(m.guild.id),key=m.guild.id+':'+m.user.id+':MEMBER_KICK',now=Date.now();const arr=(auditActors.get(key)||[]).filter(t=>now-t<config.protection.antiNuke.windowMs);const actor=await actorFromAudit(m.guild,20,m.user.id);if(actor&&actor.id!==client.user.id){const am=await fetchMember(m.guild,actor.id);if(!actorAllowed(am)){arr.push(now);auditActors.set(key,arr);if(arr.length>=config.protection.antiNuke.maxActions){await punish(am,config.protection.antiNuke.action,'Anti-Nuke: MEMBER_KICK').catch(()=>{});auditActors.delete(key);await sendLog(m.guild,'protection','Anti-Nuke triggered against '+actor.tag+' for MEMBER_KICK',config.colors.danger);}}}});
+client.on('guildMemberRemove',async m=>{if(!m.guild)return;const gd=guildData(m.guild.id),p=protectionFor(m.guild),key=m.guild.id+':'+m.user.id+':MEMBER_KICK',now=Date.now();const arr=(auditActors.get(key)||[]).filter(t=>now-t<p.antiNuke.windowMs);const actor=await actorFromAudit(m.guild,20,m.user.id);if(actor&&actor.id!==client.user.id){const am=await fetchMember(m.guild,actor.id);if(!actorAllowed(am)){arr.push(now);auditActors.set(key,arr);if(arr.length>=p.antiNuke.maxActions){await punish(am,p.antiNuke.action,'Anti-Nuke: MEMBER_KICK').catch(()=>{});auditActors.delete(key);await sendLog(m.guild,'protection','Anti-Nuke triggered against '+actor.tag+' for MEMBER_KICK',config.colors.danger);}}}});
 client.on('webhookUpdate',async c=>{if(c.guild){await antiNuke(c.guild,50,null,'WEBHOOK_CREATE');await sendLog(c.guild,'webhook','Webhook activity detected in #'+c.name,config.colors.warning);}});
 client.on('guildBanAdd',async b=>{await antiNuke(b.guild,22,b.user.id,'MEMBER_BAN_ADD');});
 client.on('messageDelete',async m=>{if(m.guild)await sendLog(m.guild,'messageDelete','Message deleted in #'+(m.channel?.name||'unknown')+(m.author?' by '+m.author.tag:''),config.colors.warning);});
@@ -554,6 +554,8 @@ client.on('interactionCreate',async i=>{
     }
   }catch(e){console.error('[Interaction]',e);await commandError(i,'حدث خطأ أثناء تنفيذ العملية.').catch(()=>{});}
 });
+
+setInterval(()=>Promise.all(client.guilds.cache.map(g=>takeSnapshot(g))),60000);
 
 setInterval(async()=>{
   const now=Date.now();
