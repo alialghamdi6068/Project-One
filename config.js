@@ -55,7 +55,7 @@ module.exports = {
   tickets: {
     enabled: true, categoryId: '', staffRoleId: '', naming: 'ticket-{number}',
     panelTitle: 'Support Tickets', panelDescription: 'اختر نوع التذكرة من الأزرار.',
-    types: ['support','bug','partnership','developer'], transcript: true
+    types: ['support','bug','partnership','developer'], transcript: true, inactivityMs: 0, maxOpenPerUser: 1
   },
   welcome: { enabled: false, channelId: '', message: 'Welcome {user} to {server}!' },
   goodbye: { enabled: false, channelId: '', message: '{user} left {server}.' },
