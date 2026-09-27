@@ -1,35 +1,44 @@
 # Project One
 
-Professional Discord.js bot for moderation, protection, tickets, automation, community systems, and utility features.
+Production-oriented Discord bot built with Discord.js 14 and Node.js 20+.
 
-## Included
+## Included systems
 
-- Discord.js 14 / Node.js 20+
-- Slash commands + Arabic prefix aliases
-- Moderation: ban, kick, unban, timeout, untimeout, warn, warning history, clear, lock, unlock, slowmode, role management
-- Protection: anti-spam, anti-raid, anti-bot, invite filter, mass mentions, caps filter, anti-nuke audit monitoring, whitelist, escalating sanctions, lockdown
-- AutoMod with configurable word list and warning escalation
-- Audit logging with independent event toggles
-- Tickets: Support, Bug Report, Partnership, Developer Support, per-server numbering, custom names, duplicate prevention, claim, close/reopen, admin delete, transcript logging
-- Welcome/goodbye and autorole
-- Autoreply, announcements, reminders
-- Suggestions with approval/rejection buttons
-- Giveaways
-- Levels/XP
-- Credits economy, balance, daily
-- AFK
-- Persistent JSON storage with atomic writes and a backup
-- Central configuration in `config.js`
-- No website and no dashboard
+- Moderation: ban, kick, unban, timeout, warnings, purge, locks and slowmode.
+- Protection: anti-spam, anti-raid, anti-bot, mass mentions, invite filtering, caps filtering and configurable anti-nuke.
+- Audit protection: channel/role/guild changes, webhook audit events and actor tracking.
+- Tickets: multi-type panels, per-guild numbering, staff claim, close confirmation, reopen, admin delete, member management, ownership transfer, transcripts and inactivity auto-close.
+- AutoMod: blocked words, duplicate-message detection, mention/invite protection, domain rules, exceptions and warning escalation.
+- Suggestions: persistent up/down voting, staff approval/rejection and statistics.
+- Giveaways: entry validation, multiple winners, persistent completion state, cancellation and rerolls.
+- Levels: XP, levels, leaderboards and configurable role rewards.
+- Economy: balance, daily rewards, transfers, transaction history, leaderboard and admin balance controls.
+- Automation: reminders and scheduled messages with persistent storage.
+- Community utilities: AFK, welcome, goodbye, autorole, autoreplies and announcements.
+- Arabic prefix aliases plus slash commands.
+- JSON database with atomic writes, backup fallback, validation and graceful shutdown.
+- All major behavior is configuration-driven.
 
 ## Setup
 
 1. Install Node.js 20 or newer.
 2. Run `npm install`.
 3. Copy `.env.example` to `.env`.
-4. Set `DISCORD_TOKEN`, `CLIENT_ID`, and optionally `OWNER_IDS`.
-5. Enable the required privileged intents in the Discord Developer Portal: **Server Members**, **Message Content**, and **Presence** if you use the related features.
-6. Configure IDs and systems in `config.js`.
-7. Run `npm test`, then `npm start`.
+4. Set `DISCORD_TOKEN`, `CLIENT_ID` and `OWNER_IDS`.
+5. Start with `npm start`.
 
-The bot never stores the Discord token in the repository.
+## Configuration
+
+Edit `config.js` for defaults. Per-server settings are stored in the database where supported.
+
+## Verification
+
+Run:
+
+```bash
+npm test
+node --check src/index.js
+node --check config.js
+```
+
+No website or dashboard is required for the bot.
