@@ -79,7 +79,7 @@ client.on('messageCreate',async m=>{
     options:{
       getUser:function(){return target?target.user:null},
       getString:function(){return name==='suggest'?textArg:(textArg||null)},
-      getInteger:function(){return Number(p[0])||0}
+      getInteger:function(){return Number(name==='timeout'?p[1]:p[0])||0}
     },
     reply:async function(payload){return m.reply(payload)}
   };
