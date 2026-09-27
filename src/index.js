@@ -354,7 +354,12 @@ add(new SlashCommandBuilder().setName('remind').setDescription('Create a reminde
 });
 add(new SlashCommandBuilder().setName('suggest').setDescription('Send a suggestion').addStringOption(o=>o.setName('text').setDescription('Suggestion').setRequired(true)), async i=>{
   const c=i.guild.channels.cache.get(guildData(i.guild.id).settings.suggestionChannelId||config.suggestions.channelId); if(!config.suggestions.enabled||!c?.isTextBased())return commandError(i,'قناة الاقتراحات غير مهيأة.');
-  const msg=await c.send({embeds:[embed('New Suggestion','**From:** '+i.user+'\n\n'+i.options.getString('text'))],components:config.suggestions.approvalButtons?[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('suggest:up').setLabel('Approve').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('suggest:down').setLabel('Reject').setStyle(ButtonStyle.Danger))]:[]});await msg.react('👍').catch(()=>{});await msg.react('👎').catch(()=>{});await i.reply({content:'تم إرسال الاقتراح.',ephemeral:true});
+  db.suggestions??={};
+  const id=Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+  db.suggestions[id]={id,guildId:i.guild.id,channelId:c.id,authorId:i.user.id,text:i.options.getString('text'),status:'pending',votes:{up:[],down:[]},voters:{}};
+  const row=config.suggestions.approvalButtons?[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('suggest:up:'+id).setLabel('Approve').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('suggest:down:'+id).setLabel('Reject').setStyle(ButtonStyle.Danger))]:[];
+  const msg=await c.send({embeds:[embed('New Suggestion','**From:** '+i.user+'\n\n'+i.options.getString('text'))],components:row});
+  db.suggestions[id].messageId=msg.id;save();await i.reply({content:'تم إرسال الاقتراح.',ephemeral:true});
 });
 
 add(new SlashCommandBuilder().setName('giveaway').setDescription('Start a giveaway').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
@@ -525,7 +530,16 @@ client.on('interactionCreate',async i=>{
     if(i.customId==='ticket:claim'){const d=db.tickets[i.channel.id];if(!d||!isTicketStaff(i))return commandError(i,'استلام التذكرة متاح للستاف فقط.');d.claimedBy=i.user.id;save();return i.reply({embeds:[embed('Ticket Claimed','تم استلام التذكرة بواسطة '+i.user+'.',config.colors.success)]});}
     if(i.customId==='ticket:delete'){if(!db.tickets[i.channel.id])return commandError(i,'هذه ليست تذكرة مسجلة.');if(!i.member.permissions.has(PermissionFlagsBits.ManageChannels)&&!owner(i.user.id))return commandError(i,'حذف التذكرة متاح للإدارة فقط.');const t=await transcript(i.channel);if(t)await sendLog(i.guild,'ticket','Transcript for '+i.channel.name+'\n'+safeText(t,1800),config.colors.info);await i.reply('سيتم حذف التذكرة...');setTimeout(()=>i.channel.delete().catch(()=>{}),800);return;}
     if(i.customId==='giveaway:join'){const msg=db.giveaways[i.message.id];if(!msg)return commandError(i,'السحب غير موجود.');if(!msg.entries.includes(i.user.id))msg.entries.push(i.user.id);save();return i.reply({content:'تم تسجيل دخولك في السحب.',ephemeral:true});}
-    if(i.customId.startsWith('suggest:'))return i.reply({content:'تم تسجيل تصويتك.',ephemeral:true});
+    if(i.customId.startsWith('suggest:')){
+      const [,action,id]=i.customId.split(':');db.suggestions??={};const d=db.suggestions[id];
+      if(!d)return commandError(i,'الاقتراح غير موجود.');
+      if(d.status!=='pending')return commandError(i,'الاقتراح مغلق.');
+      const staff=hasGuildPermission(i.member,PermissionFlagsBits.ManageGuild)||(config.suggestions.staffRoleId&&i.member.roles.cache.has(config.suggestions.staffRoleId));
+      if(!staff)return commandError(i,'هذا الإجراء متاح للإدارة فقط.');
+      d.status=action==='up'?'approved':'rejected';d.reviewedBy=i.user.id;d.reviewedAt=Date.now();save();
+      await i.message.edit({components:[]}).catch(()=>{});
+      return i.reply({content:'تم تحديث حالة الاقتراح.',ephemeral:true});
+    }
   }catch(e){console.error('[Interaction]',e);await commandError(i,'حدث خطأ أثناء تنفيذ العملية.').catch(()=>{});}
 });
 
