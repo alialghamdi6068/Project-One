@@ -1,92 +1,357 @@
 require('dotenv').config();
-const fs=require('node:fs'),path=require('node:path');
-const {Client,GatewayIntentBits,Partials,REST,Routes,SlashCommandBuilder,PermissionFlagsBits,EmbedBuilder,ActionRowBuilder,ButtonBuilder,ButtonStyle,ChannelType}=require('discord.js');
-const config=require('../config');
-const file=path.resolve(config.database.file);
-fs.mkdirSync(path.dirname(file),{recursive:true});
-let db;
-try{db=JSON.parse(fs.readFileSync(file,'utf8'))}catch(e){db={guilds:{},warnings:{}}}
-function save(){fs.writeFileSync(file+'.tmp',JSON.stringify(db,null,2));fs.renameSync(file+'.tmp',file)}
-function gd(id){db.guilds[id]??={ticketCounter:0};return db.guilds[id]}
-function owner(id){return config.bot.owners.includes(id)}
-function em(title,desc,color){return new EmbedBuilder().setColor(color||config.colors.primary).setTitle(title).setDescription(desc).setTimestamp()}
-function log(guild,text,color){if(!config.logs.enabled||!config.logs.channelId)return;const c=guild.channels.cache.get(config.logs.channelId);if(c&&c.isTextBased())c.send({embeds:[em('Audit Log',text,color)]}).catch(()=>{})}
-async function member(guild,id){return guild.members.fetch(String(id).replace(/[<@!>]/g,'')).catch(()=>null)}
 
-const commands=[
- {data:new SlashCommandBuilder().setName('ping').setDescription('Show bot latency'),run:async i=>i.reply('Pong! '+i.client.ws.ping+'ms')},
- {data:new SlashCommandBuilder().setName('help').setDescription('Show commands'),run:async i=>i.reply({embeds:[em('Project One','**Moderation:** ban, kick, timeout, warn, clear, lock, unlock, slowmode\\n**Utility:** ping, help, server, user\\n**Systems:** ticket-panel, suggest')]})},
- {data:new SlashCommandBuilder().setName('server').setDescription('Server information'),run:async i=>i.reply({embeds:[em('Server Information','**Name:** '+i.guild.name+'\\n**Members:** '+i.guild.memberCount+'\\n**Channels:** '+i.guild.channels.cache.size)]})},
- {data:new SlashCommandBuilder().setName('user').setDescription('User information').addUserOption(o=>o.setName('user').setDescription('Target').setRequired(false)),run:async i=>{const u=i.options.getUser('user')||i.user;return i.reply({embeds:[em('User Information','**User:** '+u+'\\n**ID:** '+u.id)]})}},
- {data:new SlashCommandBuilder().setName('ban').setDescription('Ban member').setDefaultMemberPermissions(PermissionFlagsBits.BanMembers).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')),run:async i=>{const m=await member(i.guild,i.options.getUser('user').id);if(!m||!m.bannable)return i.reply({content:'ما أقدر أحظر هذا العضو.',ephemeral:true});const r=i.options.getString('reason')||'No reason provided';await m.ban({reason:r});await i.reply({embeds:[em('Member Banned','تم حظر '+m.user.tag+'\\n**السبب:** '+r,config.colors.danger)]});log(i.guild,i.user.tag+' banned '+m.user.tag+': '+r,config.colors.danger)}},
- {data:new SlashCommandBuilder().setName('kick').setDescription('Kick member').setDefaultMemberPermissions(PermissionFlagsBits.KickMembers).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')),run:async i=>{const m=await member(i.guild,i.options.getUser('user').id);if(!m||!m.kickable)return i.reply({content:'ما أقدر أطرد هذا العضو.',ephemeral:true});const r=i.options.getString('reason')||'No reason provided';await m.kick(r);await i.reply({embeds:[em('Member Kicked','تم طرد '+m.user.tag+'\\n**السبب:** '+r,config.colors.danger)]});log(i.guild,i.user.tag+' kicked '+m.user.tag+': '+r,config.colors.danger)}},
- {data:new SlashCommandBuilder().setName('timeout').setDescription('Timeout member').setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('minutes').setDescription('Minutes').setRequired(true).setMinValue(1).setMaxValue(40320)).addStringOption(o=>o.setName('reason').setDescription('Reason')),run:async i=>{const m=await member(i.guild,i.options.getUser('user').id);if(!m||!m.moderatable)return i.reply({content:'ما أقدر أسوي timeout لهذا العضو.',ephemeral:true});const n=i.options.getInteger('minutes'),r=i.options.getString('reason')||'No reason provided';await m.timeout(n*60000,r);await i.reply({embeds:[em('Timeout','تم تقييد '+m.user.tag+' لمدة '+n+' دقيقة.\\n**السبب:** '+r,config.colors.warning)]});log(i.guild,i.user.tag+' timed out '+m.user.tag+' for '+n+'m: '+r,config.colors.warning)}},
- {data:new SlashCommandBuilder().setName('warn').setDescription('Warn member').setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason').setRequired(true)),run:async i=>{const u=i.options.getUser('user'),r=i.options.getString('reason'),k=i.guild.id+':'+u.id;db.warnings[k]??=[];db.warnings[k].push({by:i.user.id,reason:r,at:Date.now()});save();await i.reply({embeds:[em('Warning','تم تحذير '+u+'\\n**السبب:** '+r+'\\n**العدد:** '+db.warnings[k].length,config.colors.warning)]});log(i.guild,i.user.tag+' warned '+u.tag+': '+r,config.colors.warning)}},
- {data:new SlashCommandBuilder().setName('clear').setDescription('Delete messages').setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages).addIntegerOption(o=>o.setName('amount').setDescription('1-100').setRequired(true).setMinValue(1).setMaxValue(100)),run:async i=>{const n=i.options.getInteger('amount');await i.channel.bulkDelete(n,true);await i.reply({content:'تم حذف '+n+' رسالة.',ephemeral:true});log(i.guild,i.user.tag+' deleted '+n+' messages in #'+i.channel.name)}},
- {data:new SlashCommandBuilder().setName('lock').setDescription('Lock channel').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),run:async i=>{await i.channel.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:false});await i.reply({embeds:[em('Channel Locked','تم قفل القناة.',config.colors.danger)]})}},
- {data:new SlashCommandBuilder().setName('unlock').setDescription('Unlock channel').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),run:async i=>{await i.channel.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:null});await i.reply({embeds:[em('Channel Unlocked','تم فتح القناة.',config.colors.success)]})}},
- {data:new SlashCommandBuilder().setName('slowmode').setDescription('Set slowmode').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels).addIntegerOption(o=>o.setName('seconds').setDescription('0-21600').setRequired(true).setMinValue(0).setMaxValue(21600)),run:async i=>{const n=i.options.getInteger('seconds');await i.channel.setRateLimitPerUser(n);await i.reply('Slowmode: '+n+'s')}},
- {data:new SlashCommandBuilder().setName('ticket-panel').setDescription('Send ticket panel').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),run:async i=>{if(!config.tickets.enabled)return i.reply({content:'نظام التذاكر معطل.',ephemeral:true});const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:create').setLabel('فتح تذكرة').setEmoji('🎫').setStyle(ButtonStyle.Primary));await i.channel.send({embeds:[em(config.tickets.panelTitle,config.tickets.panelDescription)],components:[row]});await i.reply({content:'تم إرسال لوحة التذاكر.',ephemeral:true})}},
- {data:new SlashCommandBuilder().setName('suggest').setDescription('Send suggestion').addStringOption(o=>o.setName('text').setDescription('Suggestion').setRequired(true)),run:async i=>{const c=i.guild.channels.cache.get(config.suggestions.channelId);if(!config.suggestions.enabled||!c||!c.isTextBased())return i.reply({content:'نظام الاقتراحات غير مهيأ.',ephemeral:true});await c.send({embeds:[em('New Suggestion','**From:** '+i.user+'\\n\\n'+i.options.getString('text'))]});await i.reply({content:'تم إرسال اقتراحك.',ephemeral:true})}}
-];
-const aliases={'مساعدة':'help','اوامر':'help','بنج':'ping','معلومات':'server','باند':'ban','حظر':'ban','كيك':'kick','طرد':'kick','تحذير':'warn','مسح':'clear','قفل':'lock','فتح':'unlock','سلو':'slowmode','تكت':'ticket-panel','اقتراح':'suggest'};
-const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildModeration],partials:[Partials.Channel,Partials.Message]});
-client.once('ready',async()=>{console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');if(process.env.CLIENT_ID){try{const r=new REST({version:'10'}).setToken(process.env.DISCORD_TOKEN);await r.put(Routes.applicationCommands(process.env.CLIENT_ID),{body:commands.map(c=>c.data.toJSON())});console.log('[Project One] Registered '+commands.length+' slash commands.')}catch(e){console.error(e)}}});
-const spam=new Map(),raid=new Map();
-client.on('guildMemberAdd',async m=>{if(config.autorole.enabled&&config.autorole.roleId)await m.roles.add(config.autorole.roleId).catch(()=>{});if(config.welcome.enabled&&config.welcome.channelId){const c=m.guild.channels.cache.get(config.welcome.channelId);if(c&&c.isTextBased())c.send(config.welcome.message.replaceAll('{user}',m.toString()).replaceAll('{server}',m.guild.name)).catch(()=>{})}if(config.protection.raid.enabled){const now=Date.now(),a=(raid.get(m.guild.id)||[]).filter(t=>now-t<config.protection.raid.windowMs);a.push(now);raid.set(m.guild.id,a);if(a.length>=config.protection.raid.joins)await m.timeout(config.protection.raid.timeoutMs,'Anti-raid').catch(()=>{})}if(config.logs.events.memberJoin)log(m.guild,'Member joined: '+m.user.tag)});
-client.on('guildMemberRemove',m=>{if(config.logs.events.memberLeave)log(m.guild,'Member left: '+m.user.tag)});
-client.on('messageDelete',m=>{if(m.guild&&config.logs.events.messageDelete)log(m.guild,'Message deleted in #'+(m.channel&&m.channel.name||'unknown'))});
-client.on('messageUpdate',(a,b)=>{if(b.guild&&a.content!==b.content&&config.logs.events.messageUpdate)log(b.guild,'Message edited in #'+(b.channel&&b.channel.name||'unknown'))});
+const fs = require('node:fs');
+const path = require('node:path');
+const {
+  Client, GatewayIntentBits, Partials, REST, Routes,
+  SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType
+} = require('discord.js');
+const config = require('../config');
+
+const DB_FILE = path.resolve(config.database.file);
+const BACKUP_FILE = path.resolve(config.database.backupFile);
+fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+
+const defaults = () => ({
+  guilds: {}, warnings: {}, tickets: {}, reminders: [], giveaways: {},
+  levels: {}, economy: {}, afk: {}, autoreplies: {}
+});
+let db;
+try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = defaults(); }
+for (const k of Object.keys(defaults())) if (!db[k]) db[k] = defaults()[k];
+
+let saveTimer = null;
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      if (fs.existsSync(DB_FILE)) fs.copyFileSync(DB_FILE, BACKUP_FILE);
+      const tmp = DB_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+      fs.renameSync(tmp, DB_FILE);
+    } catch (e) { console.error('[DB]', e.message); }
+  }, 100);
+}
+function guildData(id) {
+  db.guilds[id] ??= {
+    ticketCounter: 0, settings: {}, lockedChannels: {}, raidMode: false,
+    protectionActors: {}, scheduled: [], giveaways: {}
+  };
+  return db.guilds[id];
+}
+function warningsKey(g, u) { return g + ':' + u; }
+function warnList(g, u) { const k = warningsKey(g, u); db.warnings[k] ??= []; return db.warnings[k]; }
+function embed(title, description, color = config.colors.primary) {
+  return new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp();
+}
+function owner(id) { return config.bot.owners.includes(id); }
+function isStaff(member) {
+  return !!member && (owner(member.id) || member.permissions.has(PermissionFlagsBits.Administrator) ||
+    (config.tickets.staffRoleId && member.roles.cache.has(config.tickets.staffRoleId)));
+}
+function whitelisted(member) {
+  if (!member) return false;
+  if (owner(member.id)) return true;
+  if (config.protection.whitelistUserIds.includes(member.id)) return true;
+  return config.protection.whitelistRoleIds.some(id => member.roles.cache.has(id));
+}
+function canTarget(actor, target) {
+  if (!target || !actor) return false;
+  if (target.id === actor.id || target.user.bot && target.id === actor.id) return false;
+  if (target.id === target.guild.ownerId) return false;
+  if (!config.permissions.enforceHierarchy) return true;
+  return actor.id === target.guild.ownerId || target.roles.highest.position < actor.roles.highest.position;
+}
+async function fetchMember(guild, id) {
+  return guild.members.fetch(String(id).replace(/[<@!>]/g, '')).catch(() => null);
+}
+async function sendLog(guild, event, text, color = config.colors.info) {
+  if (!config.logs.enabled || !config.logs.events[event]) return;
+  const channelId = guildData(guild.id).settings.logChannelId || config.logs.channelId;
+  if (!channelId) return;
+  const c = guild.channels.cache.get(channelId);
+  if (c?.isTextBased()) await c.send({ embeds: [embed('Audit Log', text, color)] }).catch(() => {});
+}
+function commandError(i, text) {
+  return i.replied || i.deferred ? i.followUp({ content: text, ephemeral: true }) : i.reply({ content: text, ephemeral: true });
+}
+async function punish(member, action, reason) {
+  if (!member) return false;
+  if (action === 'ban' && member.bannable) { await member.ban({ reason }); return true; }
+  if (action === 'kick' && member.kickable) { await member.kick(reason); return true; }
+  if (action === 'timeout' && member.moderatable) { await member.timeout(config.moderation.warnTimeoutMs, reason); return true; }
+  return false;
+}
+
+const commands = [];
+const add = (data, run) => commands.push({ data, run });
+
+add(new SlashCommandBuilder().setName('ping').setDescription('Show bot latency'), async i => i.reply('Pong! ' + i.client.ws.ping + 'ms'));
+add(new SlashCommandBuilder().setName('help').setDescription('Show all commands'), async i => i.reply({ embeds: [embed('Project One', [
+  '**Moderation:** ban, kick, unban, timeout, untimeout, warn, warnings, clear, lock, unlock, slowmode',
+  '**Protection:** lockdown, protection',
+  '**Tickets:** ticket-panel',
+  '**Admin:** welcome, autorole, autoreply, announce, remind',
+  '**Community:** suggest, giveaway, level, balance, daily, afk',
+  '**Utility:** ping, help, server, user, role, member'
+].join('\n'))] }));
+add(new SlashCommandBuilder().setName('server').setDescription('Server information'), async i => i.reply({ embeds: [embed('Server Information',
+  '**Name:** ' + i.guild.name + '\n**Owner:** <@' + i.guild.ownerId + '>\n**Members:** ' + i.guild.memberCount +
+  '\n**Channels:** ' + i.guild.channels.cache.size + '\n**Roles:** ' + i.guild.roles.cache.size)] }));
+add(new SlashCommandBuilder().setName('user').setDescription('User information').addUserOption(o => o.setName('user').setDescription('Target')), async i => {
+  const u = i.options.getUser('user') || i.user;
+  const m = await fetchMember(i.guild, u.id);
+  return i.reply({ embeds: [embed('User Information', '**User:** ' + u + '\n**ID:** ' + u.id +
+    '\n**Joined:** ' + (m?.joinedAt ? '<t:' + Math.floor(m.joinedAt.getTime()/1000) + ':R>' : 'Unknown'))] });
+});
+
+function modCommand(name, perm, action) {
+  add(new SlashCommandBuilder().setName(name).setDescription(name + ' a member').setDefaultMemberPermissions(perm)
+    .addUserOption(o => o.setName('user').setDescription('Target').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason')), async i => {
+      const target = await fetchMember(i.guild, i.options.getUser('user').id);
+      if (!target || !canTarget(i.member, target)) return commandError(i, 'لا يمكن تنفيذ الإجراء على هذا العضو بسبب الصلاحيات أو التسلسل الإداري.');
+      const reason = i.options.getString('reason') || config.moderation.defaultReason;
+      try { await action(target, reason); await i.reply({ embeds: [embed(name.toUpperCase(), 'تم تنفيذ الإجراء على ' + target.user.tag + '\n**السبب:** ' + reason, config.colors.danger)] }); await sendLog(i.guild, 'moderation', i.user.tag + ' used ' + name + ' on ' + target.user.tag + ': ' + reason, config.colors.danger); }
+      catch (e) { return commandError(i, 'تعذر تنفيذ العملية. تأكد من رتبة البوت وصلاحياته.'); }
+    });
+}
+modCommand('ban', PermissionFlagsBits.BanMembers, (m,r)=>m.ban({reason:r}));
+modCommand('kick', PermissionFlagsBits.KickMembers, (m,r)=>m.kick(r));
+
+add(new SlashCommandBuilder().setName('unban').setDescription('Unban a user').setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+  .addStringOption(o=>o.setName('user_id').setDescription('User ID').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')), async i=>{
+    try { const r=i.options.getString('reason')||config.moderation.defaultReason; await i.guild.members.unban(i.options.getString('user_id'),r); await i.reply('تم إلغاء الحظر.'); await sendLog(i.guild,'moderation',i.user.tag+' unbanned '+i.options.getString('user_id')); } catch { return commandError(i,'تعذر إلغاء الحظر.'); }
+  });
+add(new SlashCommandBuilder().setName('timeout').setDescription('Timeout a member').setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Target').setRequired(true)).addIntegerOption(o=>o.setName('minutes').setDescription('1-40320').setMinValue(1).setMaxValue(40320).setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason')), async i=>{
+    const m=await fetchMember(i.guild,i.options.getUser('user').id); if(!m||!canTarget(i.member,m)||!m.moderatable)return commandError(i,'لا يمكن تطبيق الـ timeout.');
+    const n=i.options.getInteger('minutes'),r=i.options.getString('reason')||config.moderation.defaultReason; await m.timeout(n*60000,r); await i.reply('تم تقييد '+m.user.tag+' لمدة '+n+' دقيقة.'); await sendLog(i.guild,'moderation',i.user.tag+' timed out '+m.user.tag);
+  });
+add(new SlashCommandBuilder().setName('untimeout').setDescription('Remove timeout').setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Target').setRequired(true)), async i=>{
+    const m=await fetchMember(i.guild,i.options.getUser('user').id); if(!m||!canTarget(i.member,m)||!m.moderatable)return commandError(i,'لا يمكن إزالة الـ timeout.');
+    await m.timeout(null,'Timeout removed'); await i.reply('تمت إزالة الـ timeout.');
+  });
+add(new SlashCommandBuilder().setName('warn').setDescription('Warn a member').setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+  .addUserOption(o=>o.setName('user').setDescription('Target').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason').setRequired(true)), async i=>{
+    const u=i.options.getUser('user'),m=await fetchMember(i.guild,u.id); if(!m||!canTarget(i.member,m))return commandError(i,'لا يمكن تحذير هذا العضو.');
+    const list=warnList(i.guild.id,u.id),reason=i.options.getString('reason'); list.push({id:Date.now().toString(36),by:i.user.id,reason,at:Date.now()}); save();
+    if(list.length>=config.moderation.maxWarnsBeforeTimeout) await m.timeout(config.moderation.warnTimeoutMs,'Automatic warning escalation').catch(()=>{});
+    await i.reply({embeds:[embed('Warning','تم تحذير '+u+'\n**السبب:** '+reason+'\n**العدد:** '+list.length,config.colors.warning)]}); await sendLog(i.guild,'moderation',i.user.tag+' warned '+u.tag+': '+reason,config.colors.warning);
+  });
+add(new SlashCommandBuilder().setName('warnings').setDescription('Show member warnings').setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers).addUserOption(o=>o.setName('user').setDescription('Target').setRequired(true)), async i=>{
+  const u=i.options.getUser('user'),list=warnList(i.guild.id,u.id); const text=list.length?list.slice(-15).map((w,n)=>'**'+(n+1)+'.** '+w.reason+' — <@'+w.by+'>').join('\n'):'لا توجد تحذيرات.'; await i.reply({embeds:[embed('Warnings for '+u.tag,text,config.colors.warning)]});
+});
+add(new SlashCommandBuilder().setName('clear').setDescription('Delete messages').setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages).addIntegerOption(o=>o.setName('amount').setDescription('1-100').setMinValue(1).setMaxValue(100).setRequired(true)), async i=>{
+  const n=i.options.getInteger('amount'); const r=await i.channel.bulkDelete(n,true); await i.reply({content:'تم حذف '+r.size+' رسالة.',ephemeral:true}); await sendLog(i.guild,'moderation',i.user.tag+' deleted '+r.size+' messages in #'+i.channel.name);
+});
+for (const [name, locked] of [['lock',true],['unlock',false]]) add(new SlashCommandBuilder().setName(name).setDescription(name+' channel').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels), async i=>{
+  await i.channel.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:locked?false:null}); guildData(i.guild.id).lockedChannels[i.channel.id]=locked; save(); await i.reply(locked?'تم قفل القناة.':'تم فتح القناة.'); await sendLog(i.guild,'channel',i.user.tag+' '+name+'ed #'+i.channel.name);
+});
+add(new SlashCommandBuilder().setName('slowmode').setDescription('Set slowmode').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels).addIntegerOption(o=>o.setName('seconds').setDescription('0-21600').setMinValue(0).setMaxValue(21600).setRequired(true)), async i=>{await i.channel.setRateLimitPerUser(i.options.getInteger('seconds'));await i.reply('تم ضبط الـ slowmode.');});
+add(new SlashCommandBuilder().setName('role').setDescription('Add or remove a role').setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addStringOption(o=>o.setName('action').setDescription('add/remove').setRequired(true).addChoices({name:'add',value:'add'},{name:'remove',value:'remove'}))
+  .addUserOption(o=>o.setName('user').setDescription('Target').setRequired(true)).addRoleOption(o=>o.setName('role').setDescription('Role').setRequired(true)), async i=>{
+    const m=await fetchMember(i.guild,i.options.getUser('user').id),r=i.options.getRole('role'); if(!m||r.position>=i.member.roles.highest.position||!r.editable)return commandError(i,'لا يمكن تعديل هذه الرتبة.');
+    const action=i.options.getString('action'); await m.roles[action](r); await i.reply('تم '+action+' الرتبة.'); await sendLog(i.guild,'role',i.user.tag+' '+action+' '+r.name+' for '+m.user.tag);
+});
+add(new SlashCommandBuilder().setName('member').setDescription('Member moderation information').setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers).addUserOption(o=>o.setName('user').setDescription('Target').setRequired(true)), async i=>{
+  const m=await fetchMember(i.guild,i.options.getUser('user').id); if(!m)return commandError(i,'العضو غير موجود.'); await i.reply({embeds:[embed('Member',m.user.tag+'\n**Roles:** '+Math.max(0,m.roles.cache.size-1)+'\n**Warnings:** '+warnList(i.guild.id,m.id).length)]});
+});
+
+add(new SlashCommandBuilder().setName('lockdown').setDescription('Lock or unlock all text channels').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addBooleanOption(o=>o.setName('enabled').setDescription('Enable lockdown').setRequired(true)), async i=>{
+    const enabled=i.options.getBoolean('enabled'),gd=guildData(i.guild.id); for(const c of i.guild.channels.cache.values()) if(c.type===ChannelType.GuildText) await c.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:enabled?false:null}).catch(()=>{}); gd.settings.lockdown=enabled; save(); await i.reply(enabled?'تم تفعيل الإغلاق العام.':'تم إلغاء الإغلاق العام.'); await sendLog(i.guild,'protection',i.user.tag+' set lockdown='+enabled,config.colors.warning);
+});
+add(new SlashCommandBuilder().setName('protection').setDescription('Show protection status').setDefaultMemberPermissions(PermissionFlagsBits.Administrator), async i=>{
+  const p=config.protection; await i.reply({embeds:[embed('Protection Status','**Global:** '+(p.enabled?'ON':'OFF')+'\n**Anti-Spam:** '+(p.spam.enabled?'ON':'OFF')+'\n**Anti-Raid:** '+(p.raid.enabled?'ON':'OFF')+'\n**Anti-Nuke:** '+(p.antiNuke.enabled?'ON':'OFF')+'\n**Anti-Bot:** '+(p.antiBot.enabled?'ON':'OFF')+'\n**Invite Filter:** '+(p.links.enabled?'ON':'OFF'))]});
+});
+
+const ticketButtons = type => new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setCustomId('ticket:create:'+type).setLabel({support:'Support',bug:'Bug Report',partnership:'Partnership',developer:'Developer Support'}[type]).setEmoji({support:'🎫',bug:'🐛',partnership:'🤝',developer:'🛠️'}[type]).setStyle(ButtonStyle.Primary)
+);
+add(new SlashCommandBuilder().setName('ticket-panel').setDescription('Send the ticket panel').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels), async i=>{
+  if(!config.tickets.enabled)return commandError(i,'نظام التذاكر معطل.');
+  const rows=[ticketButtons('support'),ticketButtons('bug'),ticketButtons('partnership'),ticketButtons('developer')];
+  await i.channel.send({embeds:[embed(config.tickets.panelTitle,config.tickets.panelDescription)],components:rows}); await i.reply({content:'تم إرسال لوحة التذاكر.',ephemeral:true});
+});
+
+add(new SlashCommandBuilder().setName('welcome').setDescription('Configure welcome channel').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addChannelOption(o=>o.setName('channel').setDescription('Channel').addChannelTypes(ChannelType.GuildText)).addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)).addStringOption(o=>o.setName('message').setDescription('Message')), async i=>{
+    const s=guildData(i.guild.id).settings;s.welcomeEnabled=i.options.getBoolean('enabled');s.welcomeChannelId=i.options.getChannel('channel')?.id||s.welcomeChannelId;s.welcomeMessage=i.options.getString('message')||config.welcome.message;save();await i.reply('تم حفظ إعدادات الترحيب.');
+});
+add(new SlashCommandBuilder().setName('autorole').setDescription('Configure autorole').setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addRoleOption(o=>o.setName('role').setDescription('Role')).addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)), async i=>{
+    const s=guildData(i.guild.id).settings;s.autoroleEnabled=i.options.getBoolean('enabled');s.autoroleRoleId=i.options.getRole('role')?.id||s.autoroleRoleId;save();await i.reply('تم حفظ إعدادات الرتبة التلقائية.');
+});
+add(new SlashCommandBuilder().setName('autoreply').setDescription('Add an automatic reply').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('trigger').setDescription('Trigger').setRequired(true)).addStringOption(o=>o.setName('reply').setDescription('Reply').setRequired(true)), async i=>{
+    const s=guildData(i.guild.id);s.settings.autoreplies??=[];s.settings.autoreplies.push({trigger:i.options.getString('trigger').toLowerCase(),reply:i.options.getString('reply')});save();await i.reply('تمت إضافة الرد التلقائي.');
+});
+add(new SlashCommandBuilder().setName('announce').setDescription('Send an announcement').setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+  .addChannelOption(o=>o.setName('channel').setDescription('Channel').addChannelTypes(ChannelType.GuildText).setRequired(true)).addStringOption(o=>o.setName('message').setDescription('Message').setRequired(true)), async i=>{
+    const c=i.options.getChannel('channel');await c.send({embeds:[embed('Announcement',i.options.getString('message'),config.colors.info)]});await i.reply({content:'تم إرسال الإعلان.',ephemeral:true});
+});
+add(new SlashCommandBuilder().setName('remind').setDescription('Create a reminder').addIntegerOption(o=>o.setName('minutes').setDescription('Minutes').setMinValue(1).setMaxValue(525600).setRequired(true)).addStringOption(o=>o.setName('text').setDescription('Reminder').setRequired(true)), async i=>{
+  db.reminders.push({id:Date.now().toString(36),guildId:i.guild.id,userId:i.user.id,channelId:i.channel.id,at:Date.now()+i.options.getInteger('minutes')*60000,text:i.options.getString('text')});save();await i.reply('تم ضبط التذكير.');
+});
+add(new SlashCommandBuilder().setName('suggest').setDescription('Send a suggestion').addStringOption(o=>o.setName('text').setDescription('Suggestion').setRequired(true)), async i=>{
+  const c=i.guild.channels.cache.get(guildData(i.guild.id).settings.suggestionChannelId||config.suggestions.channelId); if(!config.suggestions.enabled||!c?.isTextBased())return commandError(i,'قناة الاقتراحات غير مهيأة.');
+  const msg=await c.send({embeds:[embed('New Suggestion','**From:** '+i.user+'\n\n'+i.options.getString('text'))],components:config.suggestions.approvalButtons?[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('suggest:up').setLabel('Approve').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('suggest:down').setLabel('Reject').setStyle(ButtonStyle.Danger))]:[]});await msg.react('👍').catch(()=>{});await msg.react('👎').catch(()=>{});await i.reply({content:'تم إرسال الاقتراح.',ephemeral:true});
+});
+
+add(new SlashCommandBuilder().setName('giveaway').setDescription('Start a giveaway').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addIntegerOption(o=>o.setName('minutes').setDescription('Duration').setMinValue(1).setMaxValue(10080).setRequired(true))
+  .addIntegerOption(o=>o.setName('winners').setDescription('Winners').setMinValue(1).setMaxValue(20).setRequired(true))
+  .addStringOption(o=>o.setName('prize').setDescription('Prize').setRequired(true)), async i=>{
+    const duration=i.options.getInteger('minutes')*60000,winners=i.options.getInteger('winners'),prize=i.options.getString('prize');
+    const msg=await i.channel.send({embeds:[embed('Giveaway','**Prize:** '+prize+'\n**Winners:** '+winners+'\n**Ends:** <t:'+Math.floor((Date.now()+duration)/1000)+':R>')],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('giveaway:join').setLabel('Enter').setEmoji('🎉').setStyle(ButtonStyle.Primary))]});
+    db.giveaways[msg.id]={channelId:i.channel.id,guildId:i.guild.id,ends:Date.now()+duration,winners,prize,entries:[]};save();await i.reply({content:'تم إنشاء السحب.',ephemeral:true});
+});
+add(new SlashCommandBuilder().setName('level').setDescription('Show your level').addUserOption(o=>o.setName('user').setDescription('User')), async i=>{
+  const u=i.options.getUser('user')||i.user,k=i.guild.id+':'+u.id,d=db.levels[k]||{xp:0,level:0};await i.reply({embeds:[embed('Level',u+'\n**Level:** '+d.level+'\n**XP:** '+d.xp)]});
+});
+add(new SlashCommandBuilder().setName('balance').setDescription('Show balance').addUserOption(o=>o.setName('user').setDescription('User')), async i=>{
+  const u=i.options.getUser('user')||i.user,k=i.guild.id+':'+u.id;db.economy[k]??={balance:0,lastDaily:0};save();await i.reply('**'+u.tag+'** has **'+db.economy[k].balance+' '+config.economy.currency+'**.');
+});
+add(new SlashCommandBuilder().setName('daily').setDescription('Claim daily credits'), async i=>{
+  const k=i.guild.id+':'+i.user.id;db.economy[k]??={balance:0,lastDaily:0};if(Date.now()-db.economy[k].lastDaily<86400000)return commandError(i,'استلمت مكافأتك اليومية مسبقًا.');db.economy[k].balance+=100;db.economy[k].lastDaily=Date.now();save();await i.reply('تمت إضافة **100 '+config.economy.currency+'** إلى رصيدك.');
+});
+add(new SlashCommandBuilder().setName('afk').setDescription('Set or clear AFK').addStringOption(o=>o.setName('reason').setDescription('Reason')), async i=>{
+  db.afk[i.guild.id+':'+i.user.id]={reason:i.options.getString('reason')||'AFK',at:Date.now()};save();await i.reply('تم تفعيل AFK.');
+});
+
+const aliases={
+  'مساعدة':'help','اوامر':'help','بنج':'ping','معلومات':'server','باند':'ban','حظر':'ban','كيك':'kick','طرد':'kick',
+  'تحذير':'warn','تحذيرات':'warnings','مسح':'clear','قفل':'lock','فتح':'unlock','سلو':'slowmode','تكت':'ticket-panel',
+  'اقتراح':'suggest','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
+  'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role'
+};
+
+const client=new Client({
+  intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildModeration,GatewayIntentBits.GuildPresences],
+  partials:[Partials.Channel,Partials.Message,Partials.GuildMember]
+});
+
+const spam=new Map(), joins=new Map(), auditActors=new Map();
+
+async function actorFromAudit(guild,type,targetId){
+  try {
+    const logs=await guild.fetchAuditLogs({type,limit:5});
+    const entry=logs.entries.find(e=>(!targetId||e.target?.id===targetId)&&(Date.now()-e.createdTimestamp<15000));
+    return entry?.executor||null;
+  } catch { return null; }
+}
+function actorAllowed(member){ return !member || whitelisted(member); }
+
+async function antiNuke(guild,type,targetId,label){
+  if(!config.protection.enabled||!config.protection.antiNuke.enabled||!config.protection.antiNuke.events.includes(label))return;
+  const actor=await actorFromAudit(guild,type,targetId); if(!actor||actor.id===client.user.id)return;
+  const m=await fetchMember(guild,actor.id); if(actorAllowed(m))return;
+  const key=guild.id+':'+actor.id+':'+label,now=Date.now(),arr=(auditActors.get(key)||[]).filter(t=>now-t<config.protection.antiNuke.windowMs);arr.push(now);auditActors.set(key,arr);
+  if(arr.length<config.protection.antiNuke.maxActions)return;
+  const action=config.protection.antiNuke.action; await punish(m,action,'Anti-Nuke: '+label).catch(()=>{}); auditActors.delete(key);
+  await sendLog(guild,'protection','Anti-Nuke triggered against '+actor.tag+' for '+label,config.colors.danger);
+}
+
+client.once('ready',async()=>{
+  client.user.setActivity(config.bot.activity);
+  console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
+  if(process.env.CLIENT_ID){try{const rest=new REST({version:'10'}).setToken(process.env.DISCORD_TOKEN);await rest.put(Routes.applicationCommands(process.env.CLIENT_ID),{body:commands.map(c=>c.data.toJSON())});console.log('[Project One] Registered '+commands.length+' slash commands.')}catch(e){console.error('[Commands]',e.message)}}
+});
+
+client.on('guildMemberAdd',async m=>{
+  const s=guildData(m.guild.id).settings;
+  if(config.protection.antiBot.enabled&&m.user.bot&&!whitelisted(m)){await m.kick('Anti-Bot').catch(()=>{});await sendLog(m.guild,'protection','Anti-Bot removed '+m.user.tag,config.colors.warning);return;}
+  if((s.autoroleEnabled??config.autorole.enabled)&& (s.autoroleRoleId||config.autorole.roleId))await m.roles.add(s.autoroleRoleId||config.autorole.roleId).catch(()=>{});
+  if(s.welcomeEnabled??config.welcome.enabled){const c=m.guild.channels.cache.get(s.welcomeChannelId||config.welcome.channelId);if(c?.isTextBased())await c.send((s.welcomeMessage||config.welcome.message).replaceAll('{user}',m.toString()).replaceAll('{server}',m.guild.name)).catch(()=>{});}
+  if(config.protection.raid.enabled){const now=Date.now(),a=(joins.get(m.guild.id)||[]).filter(t=>now-t<config.protection.raid.windowMs);a.push(now);joins.set(m.guild.id,a);if(a.length>=config.protection.raid.joins){guildData(m.guild.id).settings.raidMode=true;if(config.protection.raid.lockdown)for(const c of m.guild.channels.cache.values())if(c.type===ChannelType.GuildText)await c.permissionOverwrites.edit(m.guild.roles.everyone,{SendMessages:false}).catch(()=>{});await m.timeout(config.protection.raid.timeoutMs,'Anti-Raid').catch(()=>{});await sendLog(m.guild,'protection','Anti-Raid threshold reached: '+a.length+' joins.',config.colors.danger);}}
+  await sendLog(m.guild,'memberJoin','Member joined: '+m.user.tag);
+});
+client.on('guildMemberRemove',async m=>{const s=guildData(m.guild.id).settings;if(s.goodbyeEnabled??config.goodbye.enabled){const c=m.guild.channels.cache.get(s.goodbyeChannelId||config.goodbye.channelId);if(c?.isTextBased())await c.send((s.goodbyeMessage||config.goodbye.message).replaceAll('{user}',m.user.toString()).replaceAll('{server}',m.guild.name)).catch(()=>{});}await sendLog(m.guild,'memberLeave','Member left: '+m.user.tag);});
+client.on('guildMemberUpdate',async(a,b)=>{if(a.roles.cache.size!==b.roles.cache.size)await sendLog(b.guild,'memberUpdate','Roles changed for '+b.user.tag);});
+client.on('channelCreate',c=>{if(c.guild)antiNuke(c.guild,12,c.id,'CHANNEL_DELETE');});
+client.on('channelDelete',c=>{if(c.guild)antiNuke(c.guild,12,c.id,'CHANNEL_DELETE');});
+client.on('roleCreate',r=>{if(r.guild)sendLog(r.guild,'role','Role created: '+r.name);});
+client.on('roleDelete',r=>{if(r.guild){antiNuke(r.guild,32,r.id,'ROLE_DELETE');sendLog(r.guild,'role','Role deleted: '+r.name,config.colors.warning);}});
+client.on('webhookUpdate',async c=>{if(c.guild){await antiNuke(c.guild,50,null,'WEBHOOK_CREATE');await sendLog(c.guild,'webhook','Webhook activity detected in #'+c.name,config.colors.warning);}});
+client.on('guildBanAdd',async b=>{await antiNuke(b.guild,22,b.user.id,'MEMBER_BAN_ADD');});
+client.on('messageDelete',async m=>{if(m.guild)await sendLog(m.guild,'messageDelete','Message deleted in #'+(m.channel?.name||'unknown')+(m.author?' by '+m.author.tag:''),config.colors.warning);});
+client.on('messageUpdate',async(a,b)=>{if(b.guild&&a.content!==b.content)await sendLog(b.guild,'messageUpdate','Message edited in #'+(b.channel?.name||'unknown'),config.colors.warning);});
+client.on('voiceStateUpdate',async(a,b)=>{if(b.guild&&a.channelId!==b.channelId)await sendLog(b.guild,'voice','Voice state changed for '+b.member.user.tag);});
+
 client.on('messageCreate',async m=>{
   if(!m.guild||m.author.bot)return;
   const now=Date.now(),key=m.guild.id+':'+m.author.id;
-  if(config.protection.enabled&&config.protection.spam.enabled){
-    const a=(spam.get(key)||[]).filter(t=>now-t<config.protection.spam.windowMs);
-    a.push(now);spam.set(key,a);
-    if(a.length>=config.protection.spam.maxMessages){
-      await m.member.timeout(config.protection.spam.timeoutMs,'Anti-spam').catch(()=>{});
-      spam.delete(key);log(m.guild,'Anti-spam action against '+m.author.tag,config.colors.warning);return
-    }
+  if(db.afk[m.guild.id+':'+m.author.id]){delete db.afk[m.guild.id+':'+m.author.id];save();await m.reply('تم إلغاء AFK تلقائيًا.').catch(()=>{});}
+  for(const mentioned of m.mentions.users.values()){const a=db.afk[m.guild.id+':'+mentioned.id];if(a)await m.reply(mentioned.tag+' حالياً AFK: '+a.reason).catch(()=>{});}
+  const s=guildData(m.guild.id).settings;
+  const rules=s.autoreplies||config.autoreply.rules;
+  const hit=rules.find(x=>m.content.toLowerCase().includes(String(x.trigger).toLowerCase()));if(hit)await m.reply(hit.reply).catch(()=>{});
+  if(config.protection.enabled&&config.protection.spam.enabled&&!whitelisted(m.member)){
+    const a=(spam.get(key)||[]).filter(t=>now-t<config.protection.spam.windowMs);a.push(now);spam.set(key,a);
+    if(a.length>=config.protection.spam.maxMessages){await m.member.timeout(config.protection.spam.timeoutMs,'Anti-Spam').catch(()=>{});await m.delete().catch(()=>{});spam.delete(key);await sendLog(m.guild,'protection','Anti-Spam action against '+m.author.tag,config.colors.warning);return;}
   }
-  if(config.protection.enabled&&config.protection.mentions.enabled&&m.mentions.users.size>config.protection.mentions.maxMentions){
-    await m.delete().catch(()=>{});log(m.guild,'Mention protection triggered by '+m.author.tag,config.colors.warning);return
+  if(config.protection.enabled&&!whitelisted(m.member)){
+    if(config.protection.mentions.enabled&&m.mentions.users.size>config.protection.mentions.maxMentions){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Mass mention blocked from '+m.author.tag,config.colors.warning);return;}
+    if(config.protection.links.enabled&&config.protection.links.blockInvites&&/discord\.gg\/|discord\.com\/invite\//i.test(m.content)){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Discord invite blocked from '+m.author.tag,config.colors.warning);return;}
+    if(config.protection.caps.enabled&&m.content.length>=config.protection.caps.minimumLength){const letters=m.content.replace(/[^A-Za-z]/g,''),upper=letters.replace(/[^A-Z]/g,'');if(letters.length&&upper.length/letters.length>=config.protection.caps.threshold){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Excessive caps blocked from '+m.author.tag,config.colors.warning);return;}}
   }
-  if(config.protection.enabled&&config.protection.links.enabled&&config.protection.links.blockInvites&&/discord\.gg\/|discord\.com\/invite\//i.test(m.content)){
-    await m.delete().catch(()=>{});log(m.guild,'Invite-link protection triggered by '+m.author.tag,config.colors.warning);return
+  if(config.automod.enabled&&!whitelisted(m.member)&&config.automod.badWords.some(w=>w&&m.content.toLowerCase().includes(w.toLowerCase()))){
+    if(config.automod.deleteMessages)await m.delete().catch(()=>{});if(config.automod.warnOnViolation){const list=warnList(m.guild.id,m.author.id);list.push({id:Date.now().toString(36),by:client.user.id,reason:'AutoMod violation',at:Date.now()});if(list.length>=config.automod.maxWarnings)await m.member.timeout(config.automod.timeoutMs,'AutoMod escalation').catch(()=>{});save();}await sendLog(m.guild,'automod','AutoMod blocked content from '+m.author.tag,config.colors.warning);return;
   }
-  if(config.protection.enabled&&config.protection.caps.enabled&&m.content.length>=config.protection.caps.minimumLength){
-    const letters=m.content.replace(/[^A-Za-z]/g,'');
-    const upper=letters.replace(/[^A-Z]/g,'');
-    if(letters.length&&upper.length/letters.length>=config.protection.caps.threshold){
-      await m.delete().catch(()=>{});log(m.guild,'Caps protection triggered by '+m.author.tag,config.colors.warning);return
-    }
-  }
-  if(config.automod.enabled&&config.automod.badWords.some(w=>m.content.toLowerCase().includes(w.toLowerCase()))){
-    if(config.automod.deleteMessages)await m.delete().catch(()=>{});
-    const k=m.guild.id+':'+m.author.id;
-    db.warnings[k]??=[];db.warnings[k].push({by:client.user.id,reason:'AutoMod violation',at:Date.now()});save();
-    log(m.guild,'AutoMod violation by '+m.author.tag,config.colors.warning);return
-  }
+  if(config.levels.enabled){const k=m.guild.id+':'+m.author.id,d=db.levels[k]??{xp:0,level:0,last:0};if(now-d.last>=config.levels.cooldownMs){d.xp+=config.levels.xpPerMessage;d.last=now;const next=(d.level+1)*100;if(d.xp>=next)d.level++;db.levels[k]=d;save();}}
   if(!m.content.startsWith(config.bot.prefix))return;
-  const p=m.content.slice(config.bot.prefix.length).trim().split(/\s+/),raw=(p.shift()||'').toLowerCase(),name=aliases[raw]||raw,c=commands.find(x=>x.data.name===name);
-  if(!c)return;
-  const required={ban:'BanMembers',kick:'KickMembers',timeout:'ModerateMembers',warn:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels','ticket-panel':'ManageChannels'};
+  const parts=m.content.slice(config.bot.prefix.length).trim().split(/\s+/),raw=(parts.shift()||'').toLowerCase(),name=aliases[raw]||raw,c=commands.find(x=>x.data.name===name);if(!c)return;
+  const required={ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
   if(required[name]&&!m.member.permissions.has(PermissionFlagsBits[required[name]]))return m.reply('ما عندك الصلاحية المطلوبة.');
-  const target=p[0]?await member(m.guild,p[0]):null;
-  const textArg=name==='suggest'?p.join(' '):p.slice(1).join(' ');
-  const fake={
-    guild:m.guild,channel:m.channel,user:m.author,client:client,member:m.member,
-    options:{
-      getUser:function(){return target?target.user:null},
-      getString:function(){return name==='suggest'?textArg:(textArg||null)},
-      getInteger:function(){return Number(name==='timeout'?p[1]:p[0])||0}
-    },
-    reply:async function(payload){return m.reply(payload)}
-  };
-  try{await c.run(fake)}catch(e){console.error('[Prefix]',e);m.reply('حدث خطأ أثناء تنفيذ الأمر.').catch(()=>{})}
+  const target=parts[0]?await fetchMember(m.guild,parts[0]):null;
+  const fake={guild:m.guild,channel:m.channel,user:m.author,member:m.member,client,options:{
+    getUser:()=>target?.user||null,getString:(n)=>{if(name==='suggest')return parts.join(' ');if(name==='ban'||name==='kick'||name==='warn')return parts.slice(1).join(' ')||null;return parts.join(' ')||null;},
+    getInteger:(n)=>name==='timeout'?Number(parts[1])||0:Number(parts[0])||0,getBoolean:()=>parts[0]==='true',getRole:()=>null,getChannel:()=>m.channel
+  },reply:p=>m.reply(p),followUp:p=>m.reply(p)};
+  try{await c.run(fake);await sendLog(m.guild,'command',m.author.tag+' used !'+raw);}catch(e){console.error('[Prefix]',e);await m.reply('حدث خطأ أثناء تنفيذ الأمر.').catch(()=>{});}
 });
 
-client.on('interactionCreate',async i=>{try{if(i.isChatInputCommand()){const c=commands.find(x=>x.data.name===i.commandName);if(c)await c.run(i);return}if(!i.isButton())return;if(i.customId==='ticket:create'){const existing=i.guild.channels.cache.find(c=>c.topic==='ticket-owner:'+i.user.id);if(existing)return i.reply({content:'عندك تذكرة مفتوحة بالفعل: '+existing,ephemeral:true});const g=gd(i.guild.id);g.ticketCounter++;const name=config.tickets.naming.replace('{number}',String(g.ticketCounter)).replace('{user}',i.user.username).slice(0,90);const ow=[{id:i.guild.roles.everyone.id,deny:['ViewChannel']},{id:i.user.id,allow:['ViewChannel','SendMessages','ReadMessageHistory','AttachFiles']}];if(config.tickets.staffRoleId)ow.push({id:config.tickets.staffRoleId,allow:['ViewChannel','SendMessages','ReadMessageHistory','ManageMessages']});const ch=await i.guild.channels.create({name:name,type:ChannelType.GuildText,parent:config.tickets.categoryId||undefined,topic:'ticket-owner:'+i.user.id,permissionOverwrites:ow});save();const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:close').setLabel('إغلاق').setEmoji('🔒').setStyle(ButtonStyle.Secondary),new ButtonBuilder().setCustomId('ticket:delete').setLabel('حذف').setEmoji('🗑️').setStyle(ButtonStyle.Danger));await ch.send({content:i.user.toString(),embeds:[em('Ticket','اكتب مشكلتك هنا. عند الانتهاء استخدم زر الإغلاق.')],components:[row]});return i.reply({content:'تم إنشاء التذكرة: '+ch,ephemeral:true})}if(i.customId==='ticket:close'){const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:confirm-close').setLabel('تأكيد الإغلاق').setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId('ticket:cancel-close').setLabel('إلغاء').setStyle(ButtonStyle.Secondary));return i.reply({content:'تأكيد إغلاق التذكرة؟',components:[row],ephemeral:true})}if(i.customId==='ticket:cancel-close')return i.update({content:'تم إلغاء الإغلاق.',components:[]});if(i.customId==='ticket:confirm-close'){const id=(i.channel.topic||'').split('ticket-owner:')[1];if(id)await i.channel.permissionOverwrites.edit(id,{ViewChannel:false,SendMessages:false}).catch(()=>{});const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:reopen').setLabel('إعادة فتح').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('ticket:delete').setLabel('حذف').setStyle(ButtonStyle.Danger));await i.channel.send({embeds:[em('Ticket Closed','تم إغلاق التذكرة بواسطة '+i.user+'.')],components:[row]});return i.update({content:'تم إغلاق التذكرة.',components:[]})}if(i.customId==='ticket:reopen'){const id=(i.channel.topic||'').split('ticket-owner:')[1];if(id)await i.channel.permissionOverwrites.edit(id,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true}).catch(()=>{});return i.reply({embeds:[em('Ticket Reopened','تمت إعادة فتح التذكرة.',config.colors.success)]})}if(i.customId==='ticket:delete'){if(!i.member.permissions.has(PermissionFlagsBits.ManageChannels)&&!owner(i.user.id))return i.reply({content:'حذف التذكرة متاح للإدارة فقط.',ephemeral:true});await i.reply('سيتم حذف التذكرة...');setTimeout(()=>i.channel.delete().catch(()=>{}),1000)}}catch(e){console.error('[Interaction]',e);if(!i.replied&&!i.deferred)i.reply({content:'حدث خطأ أثناء تنفيذ العملية.',ephemeral:true}).catch(()=>{})}});
-process.on('unhandledRejection',e=>console.error(e));
-if(!process.env.DISCORD_TOKEN){console.error('Missing DISCORD_TOKEN');process.exit(1)}
+async function createTicket(i,type){
+  const gd=guildData(i.guild.id);const existing=i.guild.channels.cache.find(c=>c.topic?.includes('ticket-owner:'+i.user.id)&&c.topic?.includes('ticket-status:open'));if(existing)return commandError(i,'عندك تذكرة مفتوحة بالفعل: '+existing);
+  gd.ticketCounter++;const name=config.tickets.naming.replace('{number}',String(gd.ticketCounter)).replace('{user}',i.user.username).replace('{type}',type).slice(0,90);
+  const ow=[{id:i.guild.roles.everyone.id,deny:['ViewChannel']},{id:i.user.id,allow:['ViewChannel','SendMessages','ReadMessageHistory','AttachFiles']}];if(config.tickets.staffRoleId)ow.push({id:config.tickets.staffRoleId,allow:['ViewChannel','SendMessages','ReadMessageHistory','ManageMessages']});
+  const ch=await i.guild.channels.create({name,type:ChannelType.GuildText,parent:config.tickets.categoryId||undefined,topic:'ticket-owner:'+i.user.id+';ticket-type:'+type+';ticket-status:open;ticket-number:'+gd.ticketCounter,permissionOverwrites:ow});db.tickets[ch.id]={guildId:i.guild.id,ownerId:i.user.id,type,status:'open',number:gd.ticketCounter,created:Date.now(),claimedBy:null};save();
+  const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:close').setLabel('إغلاق').setEmoji('🔒').setStyle(ButtonStyle.Secondary),new ButtonBuilder().setCustomId('ticket:claim').setLabel('استلام').setEmoji('👤').setStyle(ButtonStyle.Primary),new ButtonBuilder().setCustomId('ticket:delete').setLabel('حذف').setEmoji('🗑️').setStyle(ButtonStyle.Danger));
+  await ch.send({content:i.user.toString(),embeds:[embed('Ticket — '+type,'تم إنشاء التذكرة. اكتب تفاصيل طلبك هنا.')],components:[row]});await i.reply({content:'تم إنشاء التذكرة: '+ch,ephemeral:true});await sendLog(i.guild,'ticket','Ticket #'+gd.ticketCounter+' created by '+i.user.tag);
+}
+async function transcript(ch){
+  if(!config.tickets.transcript)return null;
+  const msgs=await ch.messages.fetch({limit:100}).catch(()=>null);if(!msgs)return null;
+  return [...msgs.values()].reverse().map(m=>'['+new Date(m.createdTimestamp).toISOString()+'] '+m.author.tag+': '+(m.content||'[embed/attachment]')).join('\n').slice(-1900);
+}
+
+client.on('interactionCreate',async i=>{
+  try{
+    if(i.isChatInputCommand()){const c=commands.find(x=>x.data.name===i.commandName);if(c)await c.run(i);return;}
+    if(!i.isButton())return;
+    if(i.customId.startsWith('ticket:create:'))return createTicket(i,i.customId.split(':')[2]);
+    if(i.customId==='ticket:close'){const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:confirm-close').setLabel('تأكيد الإغلاق').setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId('ticket:cancel-close').setLabel('إلغاء').setStyle(ButtonStyle.Secondary));return i.reply({content:'تأكيد إغلاق التذكرة؟',components:[row],ephemeral:true});}
+    if(i.customId==='ticket:cancel-close')return i.update({content:'تم إلغاء الإغلاق.',components:[]});
+    if(i.customId==='ticket:confirm-close'){const d=db.tickets[i.channel.id];if(!d)return commandError(i,'بيانات التذكرة غير موجودة.');d.status='closed';d.closedAt=Date.now();const m=await fetchMember(i.guild,d.ownerId);if(m)await i.channel.permissionOverwrites.edit(m,{ViewChannel:false,SendMessages:false}).catch(()=>{});save();const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:reopen').setLabel('إعادة فتح').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('ticket:delete').setLabel('حذف').setStyle(ButtonStyle.Danger));await i.channel.send({embeds:[embed('Ticket Closed','تم إغلاق التذكرة بواسطة '+i.user+'.',config.colors.warning)],components:[row]});return i.update({content:'تم إغلاق التذكرة.',components:[]});}
+    if(i.customId==='ticket:reopen'){const d=db.tickets[i.channel.id];if(!d)return commandError(i,'بيانات التذكرة غير موجودة.');const m=await fetchMember(i.guild,d.ownerId);if(m)await i.channel.permissionOverwrites.edit(m,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true}).catch(()=>{});d.status='open';save();return i.reply({embeds:[embed('Ticket Reopened','تمت إعادة فتح التذكرة.',config.colors.success)]});}
+    if(i.customId==='ticket:claim'){const d=db.tickets[i.channel.id];if(!d||!isStaff(i.member))return commandError(i,'استلام التذكرة متاح للستاف فقط.');d.claimedBy=i.user.id;save();return i.reply({embeds:[embed('Ticket Claimed','تم استلام التذكرة بواسطة '+i.user+'.',config.colors.success)]});}
+    if(i.customId==='ticket:delete'){if(!i.member.permissions.has(PermissionFlagsBits.ManageChannels)&&!owner(i.user.id))return commandError(i,'حذف التذكرة متاح للإدارة فقط.');const t=await transcript(i.channel);if(t)await sendLog(i.guild,'ticket','Transcript for '+i.channel.name+'\n'+t,config.colors.info);await i.reply('سيتم حذف التذكرة...');setTimeout(()=>i.channel.delete().catch(()=>{}),800);return;}
+    if(i.customId==='giveaway:join'){const msg=db.giveaways[i.message.id];if(!msg)return commandError(i,'السحب غير موجود.');if(!msg.entries.includes(i.user.id))msg.entries.push(i.user.id);save();return i.reply({content:'تم تسجيل دخولك في السحب.',ephemeral:true});}
+    if(i.customId.startsWith('suggest:'))return i.reply({content:'تم تسجيل تصويتك.',ephemeral:true});
+  }catch(e){console.error('[Interaction]',e);await commandError(i,'حدث خطأ أثناء تنفيذ العملية.').catch(()=>{});}
+});
+
+setInterval(async()=>{
+  const now=Date.now();
+  for(const r of [...db.reminders])if(r.at<=now){const g=client.guilds.cache.get(r.guildId),c=g?.channels.cache.get(r.channelId);if(c?.isTextBased())await c.send('<@'+r.userId+'> تذكير: '+r.text).catch(()=>{});db.reminders=db.reminders.filter(x=>x.id!==r.id);save();}
+  for(const [id,g] of Object.entries(db.giveaways)){if(g.ends<=now){const c=client.channels.cache.get(g.channelId),entries=[...new Set(g.entries)];const winners=[];for(let n=0;n<Math.min(g.winners,entries.length);n++){const idx=Math.floor(Math.random()*entries.length);winners.push(entries.splice(idx,1)[0]);}if(c?.isTextBased())await c.send({embeds:[embed('Giveaway Ended','**Prize:** '+g.prize+'\n**Winners:** '+(winners.length?winners.map(x=>'<@'+x+'>').join(', '):'No valid entries'),config.colors.success)]}).catch(()=>{});delete db.giveaways[id];save();}}
+},15000);
+
+process.on('unhandledRejection',e=>console.error('[Unhandled]',e));
+process.on('uncaughtException',e=>console.error('[Uncaught]',e));
+if(!process.env.DISCORD_TOKEN){console.error('Missing DISCORD_TOKEN');process.exit(1);}
 client.login(process.env.DISCORD_TOKEN);
