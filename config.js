@@ -38,9 +38,10 @@ module.exports = {
       enabled: true, windowMs: 10000, maxActions: 3, action: 'ban',
       events: ['CHANNEL_DELETE','ROLE_DELETE','MEMBER_BAN_ADD','MEMBER_KICK','WEBHOOK_CREATE','WEBHOOK_DELETE']
     },
-    restore: { enabled: false }
+    restore: { enabled: false, snapshotIntervalMs: 60000, maxSnapshots: 25 }
   },
-  automod: {
+  commands: { cooldownMs: 1500, customPermissions: {} },
+  tickets: {
     enabled: true, badWords: [], deleteMessages: true, warnOnViolation: true,
     maxWarnings: 3, timeoutMs: 600000
   },
