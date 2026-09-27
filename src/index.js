@@ -172,6 +172,27 @@ add(new SlashCommandBuilder().setName('protection').setDescription('Show protect
 const ticketButtons = type => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('ticket:create:'+type).setLabel({support:'Support',bug:'Bug Report',partnership:'Partnership',developer:'Developer Support'}[type]).setEmoji({support:'🎫',bug:'🐛',partnership:'🤝',developer:'🛠️'}[type]).setStyle(ButtonStyle.Primary)
 );
+add(new SlashCommandBuilder().setName('ticket-add').setDescription('Add a member to the current ticket').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)), async i=>{
+  const d=db.tickets[i.channel.id]; if(!d)return commandError(i,'هذه ليست تذكرة مسجلة.');
+  const m=await fetchMember(i.guild,i.options.getUser('user').id); if(!m)return commandError(i,'العضو غير موجود.');
+  await i.channel.permissionOverwrites.edit(m,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true}); await i.reply('تمت إضافة العضو للتذكرة.'); await sendLog(i.guild,'ticket',i.user.tag+' added '+m.user.tag+' to '+i.channel.name);
+});
+add(new SlashCommandBuilder().setName('ticket-remove').setDescription('Remove a member from the current ticket').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)), async i=>{
+  const d=db.tickets[i.channel.id]; if(!d)return commandError(i,'هذه ليست تذكرة مسجلة.');
+  const m=await fetchMember(i.guild,i.options.getUser('user').id); if(!m)return commandError(i,'العضو غير موجود.');
+  if(m.id===d.ownerId)return commandError(i,'لا يمكن إزالة صاحب التذكرة.');
+  await i.channel.permissionOverwrites.delete(m).catch(()=>{}); await i.reply('تمت إزالة العضو من التذكرة.'); await sendLog(i.guild,'ticket',i.user.tag+' removed '+m.user.tag+' from '+i.channel.name);
+});
+add(new SlashCommandBuilder().setName('ticket-transfer').setDescription('Transfer ticket ownership').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels).addUserOption(o=>o.setName('user').setDescription('New owner').setRequired(true)), async i=>{
+  const d=db.tickets[i.channel.id]; if(!d)return commandError(i,'هذه ليست تذكرة مسجلة.');
+  const m=await fetchMember(i.guild,i.options.getUser('user').id); if(!m)return commandError(i,'العضو غير موجود.');
+  const oldOwner=await fetchMember(i.guild,d.ownerId); if(oldOwner)await i.channel.permissionOverwrites.edit(oldOwner,{ViewChannel:false,SendMessages:false}).catch(()=>{});
+  d.ownerId=m.id; await i.channel.permissionOverwrites.edit(m,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true}); save(); await i.reply('تم نقل ملكية التذكرة إلى '+m+'.'); await sendLog(i.guild,'ticket',i.user.tag+' transferred '+i.channel.name+' to '+m.user.tag);
+});
+add(new SlashCommandBuilder().setName('ticket-stats').setDescription('Show ticket statistics').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels), async i=>{
+  const all=Object.values(db.tickets).filter(x=>x.guildId===i.guild.id),open=all.filter(x=>x.status==='open').length,closed=all.filter(x=>x.status==='closed').length;
+  await i.reply({embeds:[embed('Ticket Statistics','**Total:** '+all.length+'\n**Open:** '+open+'\n**Closed:** '+closed)]});
+});
 add(new SlashCommandBuilder().setName('ticket-panel').setDescription('Send the ticket panel').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels), async i=>{
   if(!config.tickets.enabled)return commandError(i,'نظام التذاكر معطل.');
   const rows=[ticketButtons('support'),ticketButtons('bug'),ticketButtons('partnership'),ticketButtons('developer')];
@@ -226,7 +247,7 @@ add(new SlashCommandBuilder().setName('afk').setDescription('Set or clear AFK').
 const aliases={
   'مساعدة':'help','اوامر':'help','بنج':'ping','معلومات':'server','باند':'ban','حظر':'ban','كيك':'kick','طرد':'kick',
   'تحذير':'warn','تحذيرات':'warnings','مسح':'clear','قفل':'lock','فتح':'unlock','سلو':'slowmode','تكت':'ticket-panel',
-  'اقتراح':'suggest','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
+  'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
   'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role'
 };
 
