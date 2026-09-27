@@ -252,6 +252,57 @@ async function restoreSnapshot(guild){
   return {restored,missing};
 }
 
+
+add(new SlashCommandBuilder().setName('protection-restore').setDescription('Restore the latest protection snapshot').setDefaultMemberPermissions(PermissionFlagsBits.Administrator), async i=>{
+  const result=await restoreSnapshot(i.guild);
+  await i.reply({content:'تمت محاولة الاستعادة. المستعاد: '+result.restored+' | غير المستعاد: '+result.missing,ephemeral:true});
+});
+
+add(new SlashCommandBuilder().setName('economy-transfer').setDescription('Transfer credits')
+  .addUserOption(o=>o.setName('user').setDescription('Recipient').setRequired(true))
+  .addIntegerOption(o=>o.setName('amount').setDescription('Amount').setMinValue(1).setRequired(true)), async i=>{
+    const recipient=i.options.getUser('user'),amount=i.options.getInteger('amount'),eco=economyFor(i.guild);
+    if(recipient.bot||recipient.id===i.user.id||amount>eco.maxTransfer)return commandError(i,'التحويل غير صالح.');
+    try{
+      await withLock('eco:'+i.guild.id,async()=>{
+        const aKey=i.guild.id+':'+i.user.id,bKey=i.guild.id+':'+recipient.id;
+        const a=db.economy[aKey]??{balance:eco.startingBalance,lastDaily:0,transactions:[]};
+        const b=db.economy[bKey]??{balance:eco.startingBalance,lastDaily:0,transactions:[]};
+        if(a.balance<amount)throw new Error('INSUFFICIENT');
+        a.balance-=amount;b.balance+=amount;
+        const tx={id:Date.now().toString(36),at:Date.now(),from:i.user.id,to:recipient.id,amount};
+        a.transactions=[...(a.transactions||[]),tx].slice(-50);b.transactions=[...(b.transactions||[]),tx].slice(-50);
+        db.economy[aKey]=a;db.economy[bKey]=b;save();
+      });
+      await i.reply('تم تحويل **'+amount+'** '+eco.currency+' إلى '+recipient+'.');
+    }catch(e){await commandError(i,e.message==='INSUFFICIENT'?'رصيدك غير كافٍ.':'تعذر تنفيذ التحويل.');}
+});
+
+add(new SlashCommandBuilder().setName('economy-transactions').setDescription('Show recent transactions'), async i=>{
+  const d=db.economy[i.guild.id+':'+i.user.id]??{transactions:[]};
+  const rows=(d.transactions||[]).slice(-10).reverse();
+  await i.reply({embeds:[embed('Transactions',rows.length?rows.map(x=>new Date(x.at).toISOString()+' — '+(x.from===i.user.id?'إرسال':'استلام')+' '+x.amount).join('\n'):'لا توجد معاملات.')]});
+});
+
+add(new SlashCommandBuilder().setName('level-set').setDescription('Set member XP').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
+  .addIntegerOption(o=>o.setName('xp').setDescription('XP').setMinValue(0).setRequired(true)), async i=>{
+    const u=i.options.getUser('user'),xp=i.options.getInteger('xp'),l=levelFor(i.guild);
+    db.levels[i.guild.id+':'+u.id]={xp,level:Math.floor(xp/(l.xpPerLevel||100)),last:0};save();
+    await i.reply('تم ضبط XP للعضو.');
+});
+
+add(new SlashCommandBuilder().setName('level-reset').setDescription('Reset member level').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)), async i=>{
+    delete db.levels[i.guild.id+':'+i.options.getUser('user').id];save();await i.reply('تم تصفير مستوى العضو.');
+});
+
+add(new SlashCommandBuilder().setName('suggestions-stats').setDescription('Suggestion statistics').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild), async i=>{
+  const all=Object.values(db.suggestions||{}).filter(x=>x.guildId===i.guild.id);
+  const counts=all.reduce((a,x)=>(a[x.status||'pending']=(a[x.status||'pending']||0)+1,a),{});
+  await i.reply({embeds:[embed('Suggestion Statistics','Total: '+all.length+'\nPending: '+(counts.pending||0)+'\nApproved: '+(counts.approved||0)+'\nRejected: '+(counts.rejected||0))]});
+});
+
 const ticketButtons = type => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('ticket:create:'+type).setLabel({support:'Support',bug:'Bug Report',partnership:'Partnership',developer:'Developer Support'}[type]).setEmoji({support:'🎫',bug:'🐛',partnership:'🤝',developer:'🛠️'}[type]).setStyle(ButtonStyle.Primary)
 );
