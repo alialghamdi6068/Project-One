@@ -407,12 +407,12 @@ async function actorFromAudit(guild,type,targetId){
 function actorAllowed(member){ return !member || whitelisted(member); }
 
 async function antiNuke(guild,type,targetId,label){
-  if(!config.protection.enabled||!config.protection.antiNuke.enabled||!config.protection.antiNuke.events.includes(label))return;
+  const p=protectionFor(guild); if(!p.enabled||!p.antiNuke.enabled||!p.antiNuke.events.includes(label))return;
   const actor=await actorFromAudit(guild,type,targetId); if(!actor||actor.id===client.user.id)return;
   const m=await fetchMember(guild,actor.id); if(actorAllowed(m))return;
-  const key=guild.id+':'+actor.id+':'+label,now=Date.now(),arr=(auditActors.get(key)||[]).filter(t=>now-t<config.protection.antiNuke.windowMs);arr.push(now);auditActors.set(key,arr);
-  if(arr.length<config.protection.antiNuke.maxActions)return;
-  const action=config.protection.antiNuke.action; await punish(m,action,'Anti-Nuke: '+label).catch(()=>{}); auditActors.delete(key);
+  const key=guild.id+':'+actor.id+':'+label,now=Date.now(),arr=(auditActors.get(key)||[]).filter(t=>now-t<p.antiNuke.windowMs);arr.push(now);auditActors.set(key,arr);
+  if(arr.length<p.antiNuke.maxActions)return;
+  const action=p.antiNuke.action; await punish(m,action,'Anti-Nuke: '+label).catch(()=>{}); auditActors.delete(key);
   await sendLog(guild,'protection','Anti-Nuke triggered against '+actor.tag+' for '+label,config.colors.danger);
 }
 
@@ -460,8 +460,29 @@ client.on('messageCreate',async m=>{
     if(config.protection.links.enabled&&config.protection.links.blockInvites&&/discord\.gg\/|discord\.com\/invite\//i.test(m.content)){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Discord invite blocked from '+m.author.tag,config.colors.warning);return;}
     if(config.protection.caps.enabled&&m.content.length>=config.protection.caps.minimumLength){const letters=m.content.replace(/[^A-Za-z]/g,''),upper=letters.replace(/[^A-Z]/g,'');if(letters.length&&upper.length/letters.length>=config.protection.caps.threshold){await m.delete().catch(()=>{});await sendLog(m.guild,'protection','Excessive caps blocked from '+m.author.tag,config.colors.warning);return;}}
   }
-  if(config.automod.enabled&&!whitelisted(m.member)&&config.automod.badWords.some(w=>w&&m.content.toLowerCase().includes(w.toLowerCase()))){
-    if(config.automod.deleteMessages)await m.delete().catch(()=>{});if(config.automod.warnOnViolation){const list=warnList(m.guild.id,m.author.id);list.push({id:Date.now().toString(36),by:client.user.id,reason:'AutoMod violation',at:Date.now()});if(list.length>=config.automod.maxWarnings)await m.member.timeout(config.automod.timeoutMs,'AutoMod escalation').catch(()=>{});save();}await sendLog(m.guild,'automod','AutoMod blocked content from '+m.author.tag,config.colors.warning);return;
+  const am=automodFor(m.guild);
+  const ex=am.exceptions||{};
+  const exempt=ex.userIds?.includes(m.author.id)||ex.roleIds?.some(id=>m.member.roles.cache.has(id))||ex.channelIds?.includes(m.channel.id);
+  if(am.enabled&&!exempt&&!whitelisted(m.member)){
+    const rules=[...(am.badWords||[]),...(am.rules||[]).filter(r=>r.enabled!==false&&r.type==='word').map(r=>r.pattern)].filter(Boolean);
+    const dupKey='dup:'+m.guild.id+':'+m.author.id;
+    const recent=(spam.get(dupKey)||[]).filter(x=>now-x.at<(am.duplicate?.windowMs||10000));
+    recent.push({at:now,content:m.content.trim().toLowerCase()}); spam.set(dupKey,recent);
+    const same=recent.filter(x=>x.content===m.content.trim().toLowerCase()).length;
+    const hit=rules.some(w=>m.content.toLowerCase().includes(String(w).toLowerCase()))
+      || (am.duplicate?.enabled&&same>=(am.duplicate.max||3))
+      || (am.mentions?.enabled&&m.mentions.users.size>(am.mentions.max||8))
+      || (am.invites?.enabled&&/discord\.gg\/|discord\.com\/invite\//i.test(m.content));
+    if(hit){
+      if(am.deleteMessages!==false)await m.delete().catch(()=>{});
+      if(am.warnOnViolation){
+        const list=warnList(m.guild.id,m.author.id);
+        list.push({id:Date.now().toString(36),by:client.user.id,reason:'AutoMod violation',at:Date.now()});
+        if(list.length>=(am.maxWarnings||3))await m.member.timeout(am.timeoutMs||600000,'AutoMod escalation').catch(()=>{});
+        save();
+      }
+      await sendLog(m.guild,'automod','AutoMod blocked content from '+m.author.tag,config.colors.warning);return;
+    }
   }
   if(config.levels.enabled){const k=m.guild.id+':'+m.author.id,d=db.levels[k]??{xp:0,level:0,last:0};if(now-d.last>=config.levels.cooldownMs){const oldLevel=d.level;d.xp+=config.levels.xpPerMessage;d.last=now;const next=(d.level+1)*100;if(d.xp>=next)d.level++;db.levels[k]=d;save();if(d.level>oldLevel){const roleId=guildData(m.guild.id).levelRewards?.[d.level];if(roleId)await m.member.roles.add(roleId).catch(()=>{});}}}
   if(!m.content.startsWith(config.bot.prefix))return;
