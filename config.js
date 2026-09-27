@@ -38,12 +38,17 @@ module.exports = {
       enabled: true, windowMs: 10000, maxActions: 3, action: 'ban',
       events: ['CHANNEL_DELETE','ROLE_DELETE','MEMBER_BAN_ADD','MEMBER_KICK','WEBHOOK_CREATE','WEBHOOK_DELETE']
     },
-    restore: { enabled: false, snapshotIntervalMs: 60000, maxSnapshots: 25 }
+    restore: { enabled: true, snapshotIntervalMs: 60000, maxSnapshots: 25, autoRestoreDeletedChannels: false, autoRestoreDeletedRoles: false }
   },
-  commands: { cooldownMs: 1500, customPermissions: {} },
+  commands: { cooldownMs: 1500, customPermissions: {}, maxConcurrentPerUser: 1 },
   automod: {
     enabled: true, badWords: [], deleteMessages: true, warnOnViolation: true,
-    maxWarnings: 3, timeoutMs: 600000
+    maxWarnings: 3, timeoutMs: 600000,
+    rules: [], exceptions: { userIds: [], roleIds: [], channelIds: [] },
+    duplicate: { enabled: true, max: 3, windowMs: 10000 },
+    mentions: { enabled: true, max: 8 },
+    invites: { enabled: true },
+    links: { enabled: false, blockedDomains: [] }
   },
   moderation: { defaultReason: 'No reason provided', maxWarnsBeforeTimeout: 3, warnTimeoutMs: 600000 },
   permissions: { ownerBypass: true, enforceHierarchy: true },
@@ -56,9 +61,9 @@ module.exports = {
   goodbye: { enabled: false, channelId: '', message: '{user} left {server}.' },
   autorole: { enabled: false, roleId: '' },
   autoreply: { enabled: true, rules: [] },
-  suggestions: { enabled: true, channelId: '', approvalButtons: true },
-  giveaways: { enabled: true },
-  levels: { enabled: true, xpPerMessage: 5, cooldownMs: 60000 },
-  economy: { enabled: true, currency: 'Credits' },
+  suggestions: { enabled: true, channelId: '', approvalButtons: true, allowDownvote: true, staffRoleId: '' },
+  giveaways: { enabled: true, minAccountAgeMs: 0, minMembers: 0 },
+  levels: { enabled: true, xpPerMessage: 5, cooldownMs: 60000, xpPerLevel: 100, rewards: {} },
+  economy: { enabled: true, currency: 'Credits', dailyAmount: 100, dailyCooldownMs: 86400000, startingBalance: 0, maxTransfer: 1000000000 },
   api: { enabled: false, baseUrl: '' }
 };
