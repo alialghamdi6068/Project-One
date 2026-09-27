@@ -18,7 +18,8 @@ const defaults = () => ({
   levels: {}, economy: {}, afk: {}, autoreplies: {}
 });
 let db;
-try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = defaults(); }\nif (!Number.isInteger(db.schemaVersion) || db.schemaVersion < 2) db.schemaVersion = 2;
+try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = defaults(); }
+if (!Number.isInteger(db.schemaVersion) || db.schemaVersion < 2) db.schemaVersion = 2;
 for (const k of Object.keys(defaults())) if (!db[k]) db[k] = defaults()[k];
 
 let saveTimer = null;
@@ -287,6 +288,24 @@ add(new SlashCommandBuilder().setName('economy-transactions').setDescription('Sh
   await i.reply({embeds:[embed('Transactions',rows.length?rows.map(x=>new Date(x.at).toISOString()+' — '+(x.from===i.user.id?'إرسال':'استلام')+' '+x.amount).join('\n'):'لا توجد معاملات.')]});
 });
 
+add(new SlashCommandBuilder().setName('leaderboard').setDescription('Show the XP leaderboard'), async i=>{
+  const rows=Object.entries(db.levels).filter(([k])=>k.startsWith(i.guild.id+':')).sort((a,b)=>(b[1].xp||0)-(a[1].xp||0)).slice(0,10);
+  await i.reply({embeds:[embed('Level Leaderboard',rows.length?rows.map(([k,d],n)=>'**'+(n+1)+'.** <@'+k.split(':')[1]+'> — Level '+(d.level||0)+' — '+(d.xp||0)+' XP').join('\n'):'لا توجد بيانات.') ]});
+});
+add(new SlashCommandBuilder().setName('economy-top').setDescription('Show the economy leaderboard'), async i=>{
+  const eco=economyFor(i.guild),rows=Object.entries(db.economy).filter(([k])=>k.startsWith(i.guild.id+':')).sort((a,b)=>(b[1].balance||0)-(a[1].balance||0)).slice(0,10);
+  await i.reply({embeds:[embed('Economy Leaderboard',rows.length?rows.map(([k,d],n)=>'**'+(n+1)+'.** <@'+k.split(':')[1]+'> — '+(d.balance||0)+' '+eco.currency).join('\n'):'لا توجد بيانات.')]});
+});
+add(new SlashCommandBuilder().setName('protection-config').setDescription('Configure protection').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addStringOption(o=>o.setName('module').setDescription('Module').setRequired(true).addChoices(
+    {name:'all',value:'all'},{name:'spam',value:'spam'},{name:'raid',value:'raid'},{name:'mentions',value:'mentions'},{name:'links',value:'links'},{name:'caps',value:'caps'},{name:'anti-nuke',value:'antiNuke'}
+  ))
+  .addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)), async i=>{
+    const module=i.options.getString('module'),enabled=i.options.getBoolean('enabled'),s=guildData(i.guild.id).settings;
+    s.protection??={};
+    if(module==='all')s.protection.enabled=enabled;else{s.protection[module]??={};s.protection[module].enabled=enabled;}
+    save();await i.reply('تم تحديث إعدادات الحماية.');
+});
 add(new SlashCommandBuilder().setName('level-set').setDescription('Set member XP').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true))
   .addIntegerOption(o=>o.setName('xp').setDescription('XP').setMinValue(0).setRequired(true)), async i=>{
@@ -433,7 +452,7 @@ add(new SlashCommandBuilder().setName('autorole').setDescription('Configure auto
 });
 add(new SlashCommandBuilder().setName('autoreply').setDescription('Add an automatic reply').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addStringOption(o=>o.setName('trigger').setDescription('Trigger').setRequired(true)).addStringOption(o=>o.setName('reply').setDescription('Reply').setRequired(true)), async i=>{
-    const s=guildData(i.guild.id);s.settings.autoreplies??=[];s.settings.autoreplies.push({trigger:i.options.getString('trigger').toLowerCase(),reply:i.options.getString('reply')});save();await i.reply('تمت إضافة الرد التلقائي.');
+    const s=guildData(i.guild.id);s.settings.autoreplies??=[];const trigger=i.options.getString('trigger').trim().toLowerCase(),reply=i.options.getString('reply').trim(); if(!trigger||!reply)return commandError(i,'بيانات الرد غير صالحة.'); s.settings.autoreplies=s.settings.autoreplies.filter(x=>x.trigger!==trigger); s.settings.autoreplies.push({trigger,reply});save();await i.reply('تمت إضافة الرد التلقائي.');
 });
 add(new SlashCommandBuilder().setName('announce').setDescription('Send an announcement').setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
   .addChannelOption(o=>o.setName('channel').setDescription('Channel').addChannelTypes(ChannelType.GuildText).setRequired(true)).addStringOption(o=>o.setName('message').setDescription('Message').setRequired(true)), async i=>{
@@ -449,7 +468,7 @@ add(new SlashCommandBuilder().setName('suggest').setDescription('Send a suggesti
   db.suggestions[id]={id,guildId:i.guild.id,channelId:c.id,authorId:i.user.id,text:i.options.getString('text'),status:'pending',votes:{up:[],down:[]},voters:{}};
   const row=[new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('suggest:vote-up:'+id).setLabel('👍 0').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('suggest:vote-down:'+id).setLabel('👎 0').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('suggest:vote-down:'+id).setLabel('👎 0').setStyle(ButtonStyle.Secondary).setDisabled(config.suggestions.allowDownvote===false),
     ...(config.suggestions.approvalButtons?[new ButtonBuilder().setCustomId('suggest:approve:'+id).setLabel('Approve').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('suggest:reject:'+id).setLabel('Reject').setStyle(ButtonStyle.Danger)]:[])
   )];
   const msg=await c.send({embeds:[embed('New Suggestion','**From:** '+i.user+'\n\n'+i.options.getString('text'))],components:row});
@@ -478,7 +497,7 @@ add(new SlashCommandBuilder().setName('afk').setDescription('Set or clear AFK').
 });
 
 
-add(new SlashCommandBuilder().setName('bot-info').setDescription('Show bot status and system information'), async i=>{await i.reply({embeds:[embed('Project One — System Status','**Servers:** '+i.client.guilds.cache.size+'\\n**Commands:** '+commands.length+'\\n**Latency:** '+i.client.ws.ping+'ms\\n**Node:** '+process.version+'\\n**Uptime:** '+Math.floor(process.uptime()/60)+' minutes',config.colors.info)]});});
+add(new SlashCommandBuilder().setName('bot-info').setDescription('Show bot status and system information'), async i=>{await i.reply({embeds:[embed('Project One — System Status','**Servers:** '+i.client.guilds.cache.size+'\n**Commands:** '+commands.length+'\\n**Latency:** '+i.client.ws.ping+'ms\\n**Node:** '+process.version+'\\n**Uptime:** '+Math.floor(process.uptime()/60)+' minutes',config.colors.info)]});});
 add(new SlashCommandBuilder().setName('protection-whitelist').setDescription('Manage protection whitelist').setDefaultMemberPermissions(PermissionFlagsBits.Administrator).addStringOption(o=>o.setName('action').setDescription('add/remove').setRequired(true).addChoices({name:'add',value:'add'},{name:'remove',value:'remove'})).addUserOption(o=>o.setName('user').setDescription('User').setRequired(true)), async i=>{const u=i.options.getUser('user'),a=i.options.getString('action'),s=guildData(i.guild.id).settings;s.protectionWhitelist??=[];if(a==='add'&&!s.protectionWhitelist.includes(u.id))s.protectionWhitelist.push(u.id);if(a==='remove')s.protectionWhitelist=s.protectionWhitelist.filter(x=>x!==u.id);save();await i.reply('تم تحديث قائمة الحماية.');});
 add(new SlashCommandBuilder().setName('reminders').setDescription('List your reminders'), async i=>{const x=db.reminders.filter(r=>r.guildId===i.guild.id&&r.userId===i.user.id);await i.reply({embeds:[embed('Reminders',x.length?x.map(r=>'• '+r.text+' — <t:'+Math.floor(r.at/1000)+':R>').join('\\n'):'لا توجد تذكيرات.')]});});
 add(new SlashCommandBuilder().setName('giveaway-end').setDescription('End a giveaway').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addStringOption(o=>o.setName('message_id').setDescription('Giveaway message ID').setRequired(true)), async i=>{const id=i.options.getString('message_id'),g=db.giveaways[id];if(!g)return commandError(i,'السحب غير موجود.');g.ends=0;save();await i.reply('تم إنهاء السحب، وستظهر النتيجة قريبًا.');});
@@ -516,7 +535,7 @@ async function antiNuke(guild,type,targetId,label){
 }
 
 client.once('ready',async()=>{
-  client.user.setActivity(config.bot.activity);
+  client.user.setActivity(String(config.bot.activity).slice(0,128));
   console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
   if(process.env.CLIENT_ID){try{const rest=new REST({version:'10'}).setToken(process.env.DISCORD_TOKEN);await rest.put(Routes.applicationCommands(process.env.CLIENT_ID),{body:commands.map(c=>c.data.toJSON())});console.log('[Project One] Registered '+commands.length+' slash commands.')}catch(e){console.error('[Commands]',e.message)}}
 });
@@ -537,7 +556,7 @@ client.on('guildMemberUpdate',async(a,b)=>{
   if(dangerous)await antiNuke(b.guild,25,b.id,'MEMBER_ROLE_UPDATE');
 });
 client.on('channelCreate',async c=>{if(c.guild){await antiNuke(c.guild,10,c.id,'CHANNEL_CREATE');await sendLog(c.guild,'channel','Channel created: #'+c.name);}});
-client.on('channelDelete',c=>{if(c.guild){antiNuke(c.guild,12,c.id,'CHANNEL_DELETE');sendLog(c.guild,'channel','Channel deleted: #'+c.name,config.colors.warning);}});
+client.on('channelDelete',c=>{if(c.guild){if(db.tickets[c.id])delete db.tickets[c.id];antiNuke(c.guild,12,c.id,'CHANNEL_DELETE');save();sendLog(c.guild,'channel','Channel deleted: #'+c.name,config.colors.warning);}});
 client.on('roleCreate',async r=>{if(r.guild){await antiNuke(r.guild,30,r.id,'ROLE_CREATE');await sendLog(r.guild,'role','Role created: '+r.name);}});
 client.on('roleUpdate',async(oldRole,newRole)=>{
   const escalated=!oldRole.permissions.has(PermissionFlagsBits.Administrator)&&newRole.permissions.has(PermissionFlagsBits.Administrator);
@@ -609,7 +628,7 @@ client.on('messageCreate',async m=>{
   if(levels.enabled){const k=m.guild.id+':'+m.author.id,d=db.levels[k]??{xp:0,level:0,last:0};if(now-d.last>=levels.cooldownMs){const oldLevel=d.level;d.xp+=levels.xpPerMessage;d.last=now;while(d.xp>=(d.level+1)*(levels.xpPerLevel||100))d.level++;db.levels[k]=d;save();if(d.level>oldLevel){const rewards=guildData(m.guild.id).levelRewards||{};const roleId=rewards[String(d.level)]||levels.rewards?.[String(d.level)];if(roleId)await m.member.roles.add(roleId).catch(()=>{});}}}
   if(!m.content.startsWith(config.bot.prefix))return;
   const parts=m.content.slice(config.bot.prefix.length).trim().split(/\s+/),raw=(parts.shift()||'').toLowerCase(),name=aliases[raw]||raw,c=commands.find(x=>x.data.name===name);if(!c)return;
-  const required={settings:'Administrator','log-channel':'ManageGuild','suggest-channel':'ManageGuild',goodbye:'ManageGuild','autorole-remove':'ManageRoles','bot-info':null,reminders:null,'giveaway-end':'ManageGuild','giveaway-reroll':'ManageGuild','giveaway-cancel':'ManageGuild','automod':'ManageGuild','autoreply-remove':'ManageGuild','autoreply-list':'ManageGuild','remind-cancel':null,'leaderboard':null,'economy-top':null,'protection-config':'Administrator','protection-restore':'Administrator','schedule':'ManageMessages','scheduled':'ManageMessages','schedule-cancel':'ManageMessages','level-reward':'ManageRoles','level-reward-remove':'ManageRoles','economy-admin':'ManageGuild','automod-rule':'ManageGuild','protection-whitelist':'Administrator',ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
+  const required={settings:'Administrator','log-channel':'ManageGuild','suggest-channel':'ManageGuild',goodbye:'ManageGuild','autorole-remove':'ManageRoles','bot-info':null,reminders:null,'giveaway-end':'ManageGuild','giveaway-reroll':'ManageGuild','giveaway-cancel':'ManageGuild','automod':'ManageGuild','autoreply-remove':'ManageGuild','autoreply-list':'ManageGuild','remind-cancel':null,'leaderboard':null,'economy-top':null,'protection-config':'Administrator','protection-restore':'Administrator','leaderboard':null,'economy-top':null,'protection-config':'Administrator','schedule':'ManageMessages','scheduled':'ManageMessages','schedule-cancel':'ManageMessages','level-reward':'ManageRoles','level-reward-remove':'ManageRoles','economy-admin':'ManageGuild','automod-rule':'ManageGuild','protection-whitelist':'Administrator',ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
   const custom=config.commands.customPermissions?.[name]; if(custom&&!m.member.permissions.has(custom)&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.'); if(required[name]&&!m.member.permissions.has(PermissionFlagsBits[required[name]])&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.');
   const target=parts[0]?await fetchMember(m.guild,parts[0]):null;
   const fake={guild:m.guild,channel:m.channel,user:m.author,member:m.member,client,options:{
@@ -648,7 +667,15 @@ async function sendTranscriptLog(guild,name,text){
 
 client.on('interactionCreate',async i=>{
   try{
-    if(i.isChatInputCommand()){const c=commands.find(x=>x.data.name===i.commandName);if(!c)return;const wait=commandCooldown(i.user.id,i.commandName);if(wait)return commandError(i,'انتظر '+wait+' ثانية قبل تكرار الأمر.');await c.run(i);return;}
+    if(i.isChatInputCommand()){
+      const c=commands.find(x=>x.data.name===i.commandName);if(!c)return;
+      const wait=commandCooldown(i.user.id,i.commandName,config.commands.cooldownMs);if(wait)return commandError(i,'انتظر '+wait+' ثانية قبل تكرار الأمر.');
+      const key=i.user.id+':'+i.commandName,active=mutationLocks.get('cmd:'+key);
+      if(active)return commandError(i,'لديك عملية مماثلة قيد التنفيذ.');
+      let release;mutationLocks.set('cmd:'+key,new Promise(r=>release=r));
+      try{await c.run(i);}finally{mutationLocks.delete('cmd:'+key);release();}
+      return;
+    }
     if(i.isStringSelectMenu()&&i.customId==='help:category'){const map={moderation:'ban, kick, timeout, warn, warnings, clear, lock, unlock, slowmode, role',protection:'protection, lockdown, protection-whitelist',tickets:'ticket-panel, ticket-add, ticket-remove, ticket-transfer, ticket-stats',community:'suggest, giveaway, giveaway-end, level, balance, daily, afk',utility:'ping, server, user, member, bot-info, settings'};return i.update({embeds:[embed('Command Center — '+i.values[0],map[i.values[0]])],components:i.message.components});} if(!i.isButton())return;
     if(i.customId.startsWith('ticket:create:'))return createTicket(i,i.customId.split(':')[2]);
     if(i.customId==='ticket:close'){const d=db.tickets[i.channel.id];if(!d||!ticketAccess(i,d))return commandError(i,'ليس لديك صلاحية على هذه التذكرة.');const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:confirm-close').setLabel('تأكيد الإغلاق').setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId('ticket:cancel-close').setLabel('إلغاء').setStyle(ButtonStyle.Secondary));return i.reply({content:'تأكيد إغلاق التذكرة؟',components:[row],ephemeral:true});}
@@ -679,7 +706,7 @@ client.on('interactionCreate',async i=>{
         d.votes[action==='vote-up'?'up':'down'].push(i.user.id);save();
         const row=new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('suggest:vote-up:'+id).setLabel('👍 '+d.votes.up.length).setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId('suggest:vote-down:'+id).setLabel('👎 '+d.votes.down.length).setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId('suggest:vote-down:'+id).setLabel('👎 '+d.votes.down.length).setStyle(ButtonStyle.Secondary).setDisabled(config.suggestions.allowDownvote===false),
           ...(config.suggestions.approvalButtons?[new ButtonBuilder().setCustomId('suggest:approve:'+id).setLabel('Approve').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('suggest:reject:'+id).setLabel('Reject').setStyle(ButtonStyle.Danger)]:[])
         );
         await i.message.edit({components:[row]}).catch(()=>{});
@@ -701,7 +728,7 @@ client.on('interactionCreate',async i=>{
   }catch(e){console.error('[Interaction]',e);await commandError(i,'حدث خطأ أثناء تنفيذ العملية.').catch(()=>{});}
 });
 
-setInterval(()=>Promise.all(client.guilds.cache.map(g=>takeSnapshot(g))),60000);
+setInterval(()=>Promise.all(client.guilds.cache.map(g=>takeSnapshot(g))),Math.max(15000,config.protection.restore.snapshotIntervalMs||60000));
 
 setInterval(async()=>{
   const now=Date.now();
