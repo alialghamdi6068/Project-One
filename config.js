@@ -36,7 +36,7 @@ module.exports = {
     antiBot: { enabled: false, action: 'kick' },
     antiNuke: {
       enabled: true, windowMs: 10000, maxActions: 3, action: 'ban',
-      events: ['CHANNEL_CREATE','CHANNEL_DELETE','CHANNEL_UPDATE','ROLE_CREATE','ROLE_DELETE','ROLE_UPDATE','MEMBER_BAN_ADD','MEMBER_KICK','WEBHOOK_CREATE','WEBHOOK_DELETE']
+      events: ['CHANNEL_CREATE','CHANNEL_DELETE','CHANNEL_UPDATE','ROLE_CREATE','ROLE_DELETE','ROLE_UPDATE','MEMBER_ROLE_UPDATE','MEMBER_BAN_ADD','MEMBER_KICK','WEBHOOK_CREATE','WEBHOOK_DELETE']
     },
     restore: { enabled: true, snapshotIntervalMs: 60000, maxSnapshots: 25, autoRestoreDeletedChannels: false, autoRestoreDeletedRoles: false }
   },
