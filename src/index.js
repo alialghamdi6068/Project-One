@@ -192,6 +192,66 @@ add(new SlashCommandBuilder().setName('protection').setDescription('Show protect
   const p=config.protection; await i.reply({embeds:[embed('Protection Status','**Global:** '+(p.enabled?'ON':'OFF')+'\n**Anti-Spam:** '+(p.spam.enabled?'ON':'OFF')+'\n**Anti-Raid:** '+(p.raid.enabled?'ON':'OFF')+'\n**Anti-Nuke:** '+(p.antiNuke.enabled?'ON':'OFF')+'\n**Anti-Bot:** '+(p.antiBot.enabled?'ON':'OFF')+'\n**Invite Filter:** '+(p.links.enabled?'ON':'OFF'))]});
 });
 
+
+function protectionFor(guild) {
+  const base=config.protection;
+  const override=guildData(guild.id).settings.protection || {};
+  return {
+    ...base, ...override,
+    spam:{...base.spam,...(override.spam||{})},
+    mentions:{...base.mentions,...(override.mentions||{})},
+    links:{...base.links,...(override.links||{})},
+    caps:{...base.caps,...(override.caps||{})},
+    raid:{...base.raid,...(override.raid||{})},
+    antiBot:{...base.antiBot,...(override.antiBot||{})},
+    antiNuke:{...base.antiNuke,...(override.antiNuke||{})},
+    restore:{...base.restore,...(override.restore||{})}
+  };
+}
+function automodFor(guild){ return {...config.automod,...(guildData(guild.id).settings.automod||{})}; }
+function economyFor(guild){ return {...config.economy,...(guildData(guild.id).settings.economy||{})}; }
+function levelFor(guild){ return {...config.levels,...(guildData(guild.id).settings.levels||{})}; }
+
+const mutationLocks=new Map();
+async function withLock(key,fn){
+  while(mutationLocks.has(key)) await mutationLocks.get(key);
+  let release; const p=new Promise(r=>{release=r}); mutationLocks.set(key,p);
+  try{return await fn();} finally{mutationLocks.delete(key);release();}
+}
+
+function snapshotState(guild){
+  return {
+    id:Date.now().toString(36)+Math.random().toString(36).slice(2,7),
+    at:Date.now(),
+    channels:guild.channels.cache.map(c=>({id:c.id,name:c.name,type:c.type,parentId:c.parentId,position:c.rawPosition,topic:c.topic||null,nsfw:!!c.nsfw,rateLimitPerUser:c.rateLimitPerUser||0})),
+    roles:guild.roles.cache.filter(r=>r.id!==guild.id).map(r=>({id:r.id,name:r.name,color:r.color,hoist:r.hoist,mentionable:r.mentionable,permissions:r.permissions.bitfield.toString(),position:r.position}))
+  };
+}
+async function takeSnapshot(guild){
+  const p=protectionFor(guild);
+  if(!p.restore.enabled)return;
+  const gd=guildData(guild.id); gd.snapshots??=[];
+  gd.snapshots.push(snapshotState(guild));
+  while(gd.snapshots.length>p.restore.maxSnapshots)gd.snapshots.shift();
+  save();
+}
+async function restoreSnapshot(guild){
+  const gd=guildData(guild.id),snap=(gd.snapshots||[]).at(-1);
+  if(!snap)return {restored:0,missing:0};
+  const p=protectionFor(guild); let restored=0,missing=0;
+  for(const r of snap.roles) if(!guild.roles.cache.has(r.id)){
+    if(!p.restore.autoRestoreDeletedRoles){missing++;continue;}
+    const created=await guild.roles.create({name:r.name,color:r.color,hoist:r.hoist,mentionable:r.mentionable,permissions:BigInt(r.permissions)}).catch(()=>null);
+    if(created)restored++;
+  }
+  for(const c of snap.channels) if(!guild.channels.cache.has(c.id)){
+    if(!p.restore.autoRestoreDeletedChannels){missing++;continue;}
+    const created=await guild.channels.create({name:c.name,type:c.type,parent:c.parentId||undefined,topic:c.topic||undefined,nsfw:c.nsfw,rateLimitPerUser:c.rateLimitPerUser}).catch(()=>null);
+    if(created)restored++;
+  }
+  return {restored,missing};
+}
+
 const ticketButtons = type => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('ticket:create:'+type).setLabel({support:'Support',bug:'Bug Report',partnership:'Partnership',developer:'Developer Support'}[type]).setEmoji({support:'🎫',bug:'🐛',partnership:'🤝',developer:'🛠️'}[type]).setStyle(ButtonStyle.Primary)
 );
