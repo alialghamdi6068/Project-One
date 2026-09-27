@@ -275,8 +275,8 @@ add(new SlashCommandBuilder().setName('giveaway-end').setDescription('End a give
 \nconst aliases={
   'مساعدة':'help','اوامر':'help','بنج':'ping','معلومات':'server','باند':'ban','حظر':'ban','كيك':'kick','طرد':'kick',
   'تحذير':'warn','تحذيرات':'warnings','مسح':'clear','قفل':'lock','فتح':'unlock','سلو':'slowmode','تكت':'ticket-panel',
-  'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','اعدادات':'settings','معلومات-البوت':'bot-info','قائمة-التذكيرات':'reminders','انهاء-السحب':'giveaway-end','لوق':'log-channel','اقتراحات':'suggest-channel','وداع':'goodbye','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
-  'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role'
+  'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','اعدادات':'settings','معلومات-البوت':'bot-info','قائمة-التذكيرات':'reminders','الغاء-التذكير':'remind-cancel','انهاء-السحب':'giveaway-end','اعادة-السحب':'giveaway-reroll','الغاء-السحب':'giveaway-cancel','لوق':'log-channel','اقتراحات':'suggest-channel','وداع':'goodbye','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
+  'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role','توب':'leaderboard','توب-فلوس':'economy-top','اوتومود':'automod','حذف-رد':'autoreply-remove','ردود':'autoreply-list','حماية-اعدادات':'protection-config'
 };
 
 const client=new Client({
@@ -284,7 +284,7 @@ const client=new Client({
   partials:[Partials.Channel,Partials.Message,Partials.GuildMember]
 });
 
-const spam=new Map(), joins=new Map(), auditActors=new Map();
+const spam=new Map(), joins=new Map(), auditActors=new Map(), ticketBusy=new Set();
 
 async function actorFromAudit(guild,type,targetId){
   try {
@@ -355,7 +355,7 @@ client.on('messageCreate',async m=>{
   if(config.levels.enabled){const k=m.guild.id+':'+m.author.id,d=db.levels[k]??{xp:0,level:0,last:0};if(now-d.last>=config.levels.cooldownMs){d.xp+=config.levels.xpPerMessage;d.last=now;const next=(d.level+1)*100;if(d.xp>=next)d.level++;db.levels[k]=d;save();}}
   if(!m.content.startsWith(config.bot.prefix))return;
   const parts=m.content.slice(config.bot.prefix.length).trim().split(/\s+/),raw=(parts.shift()||'').toLowerCase(),name=aliases[raw]||raw,c=commands.find(x=>x.data.name===name);if(!c)return;
-  const required={settings:'Administrator','log-channel':'ManageGuild','suggest-channel':'ManageGuild',goodbye:'ManageGuild','autorole-remove':'ManageRoles','bot-info':null,reminders:null,'giveaway-end':'ManageGuild','protection-whitelist':'Administrator',ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
+  const required={settings:'Administrator','log-channel':'ManageGuild','suggest-channel':'ManageGuild',goodbye:'ManageGuild','autorole-remove':'ManageRoles','bot-info':null,reminders:null,'giveaway-end':'ManageGuild','giveaway-reroll':'ManageGuild','giveaway-cancel':'ManageGuild','automod':'ManageGuild','autoreply-remove':'ManageGuild','autoreply-list':'ManageGuild','remind-cancel':null,'leaderboard':null,'economy-top':null,'protection-config':'Administrator','protection-whitelist':'Administrator',ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
   if(required[name]&&!m.member.permissions.has(PermissionFlagsBits[required[name]]))return m.reply('ما عندك الصلاحية المطلوبة.');
   const target=parts[0]?await fetchMember(m.guild,parts[0]):null;
   const fake={guild:m.guild,channel:m.channel,user:m.author,member:m.member,client,options:{
@@ -366,12 +366,14 @@ client.on('messageCreate',async m=>{
 });
 
 async function createTicket(i,type){
+  const busyKey=i.guild.id+':'+i.user.id;if(ticketBusy.has(busyKey))return commandError(i,'جاري إنشاء تذكرتك، انتظر لحظة.');ticketBusy.add(busyKey);try{
   const gd=guildData(i.guild.id);const existing=i.guild.channels.cache.find(c=>c.topic?.includes('ticket-owner:'+i.user.id)&&c.topic?.includes('ticket-status:open'));if(existing)return commandError(i,'عندك تذكرة مفتوحة بالفعل: '+existing);
   gd.ticketCounter++;const name=config.tickets.naming.replace('{number}',String(gd.ticketCounter)).replace('{user}',i.user.username).replace('{type}',type).slice(0,90);
   const ow=[{id:i.guild.roles.everyone.id,deny:['ViewChannel']},{id:i.user.id,allow:['ViewChannel','SendMessages','ReadMessageHistory','AttachFiles']}];if(config.tickets.staffRoleId)ow.push({id:config.tickets.staffRoleId,allow:['ViewChannel','SendMessages','ReadMessageHistory','ManageMessages']});
   const ch=await i.guild.channels.create({name,type:ChannelType.GuildText,parent:config.tickets.categoryId||undefined,topic:'ticket-owner:'+i.user.id+';ticket-type:'+type+';ticket-status:open;ticket-number:'+gd.ticketCounter,permissionOverwrites:ow});db.tickets[ch.id]={guildId:i.guild.id,ownerId:i.user.id,type,status:'open',number:gd.ticketCounter,created:Date.now(),claimedBy:null};save();
   const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:close').setLabel('إغلاق').setEmoji('🔒').setStyle(ButtonStyle.Secondary),new ButtonBuilder().setCustomId('ticket:claim').setLabel('استلام').setEmoji('👤').setStyle(ButtonStyle.Primary),new ButtonBuilder().setCustomId('ticket:delete').setLabel('حذف').setEmoji('🗑️').setStyle(ButtonStyle.Danger));
   await ch.send({content:i.user.toString(),embeds:[embed('Ticket — '+type,'تم إنشاء التذكرة. اكتب تفاصيل طلبك هنا.')],components:[row]});await i.reply({content:'تم إنشاء التذكرة: '+ch,ephemeral:true});await sendLog(i.guild,'ticket','Ticket #'+gd.ticketCounter+' created by '+i.user.tag);
+  } finally { ticketBusy.delete(busyKey); }
 }
 async function transcript(ch){
   if(!config.tickets.transcript)return null;
