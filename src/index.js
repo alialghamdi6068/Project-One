@@ -303,6 +303,71 @@ add(new SlashCommandBuilder().setName('suggestions-stats').setDescription('Sugge
   await i.reply({embeds:[embed('Suggestion Statistics','Total: '+all.length+'\nPending: '+(counts.pending||0)+'\nApproved: '+(counts.approved||0)+'\nRejected: '+(counts.rejected||0))]});
 });
 
+
+add(new SlashCommandBuilder().setName('giveaway-reroll').setDescription('Reroll a finished giveaway').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('message_id').setDescription('Finished giveaway message ID').setRequired(true)), async i=>{
+    const id=i.options.getString('message_id'),g=db.finishedGiveaways?.[id];
+    if(!g||g.guildId!==i.guild.id)return commandError(i,'السحب المنتهي غير موجود.');
+    const previous=new Set(g.winners||[]),pool=[...new Set(g.entries||[])].filter(x=>!previous.has(x));
+    if(!pool.length)return commandError(i,'لا يوجد مشاركون جدد لإعادة السحب.');
+    const winner=pool[Math.floor(Math.random()*pool.length)];g.rerolls??=[];g.rerolls.push({winner,at:Date.now(),by:i.user.id});g.winners=[...(g.winners||[]),winner];save();
+    const c=client.channels.cache.get(g.channelId);if(c?.isTextBased())await c.send({embeds:[embed('Giveaway Reroll','الفائز الجديد: <@'+winner+'>',config.colors.success)]}).catch(()=>{});
+    await i.reply('تمت إعادة السحب.');
+});
+
+add(new SlashCommandBuilder().setName('giveaway-cancel').setDescription('Cancel an active giveaway').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('message_id').setDescription('Giveaway message ID').setRequired(true)), async i=>{
+    const id=i.options.getString('message_id'),g=db.giveaways[id];
+    if(!g||g.guildId!==i.guild.id)return commandError(i,'السحب غير موجود.');
+    g.cancelledAt=Date.now();g.cancelledBy=i.user.id;db.finishedGiveaways??={};db.finishedGiveaways[id]={...g,status:'cancelled'};delete db.giveaways[id];save();
+    const c=client.channels.cache.get(g.channelId);if(c?.isTextBased())await c.messages.fetch(id).then(m=>m.edit({components:[],embeds:[embed('Giveaway Cancelled','تم إلغاء السحب.',config.colors.warning)]})).catch(()=>{});
+    await i.reply('تم إلغاء السحب.');
+});
+
+add(new SlashCommandBuilder().setName('automod').setDescription('Configure AutoMod').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true))
+  .addStringOption(o=>o.setName('words').setDescription('Comma-separated blocked words')), async i=>{
+    const s=guildData(i.guild.id).settings;s.automod??={};s.automod.enabled=i.options.getBoolean('enabled');
+    const words=i.options.getString('words');if(words!==null)s.automod.badWords=words.split(',').map(x=>x.trim()).filter(Boolean);
+    save();await i.reply('تم حفظ إعدادات AutoMod.');
+});
+
+add(new SlashCommandBuilder().setName('autoreply-remove').setDescription('Remove an autoreply').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addStringOption(o=>o.setName('trigger').setDescription('Trigger').setRequired(true)), async i=>{
+    const s=guildData(i.guild.id).settings;s.autoreplies??=[];const before=s.autoreplies.length;s.autoreplies=s.autoreplies.filter(x=>x.trigger!==i.options.getString('trigger'));
+    save();await i.reply(before===s.autoreplies.length?'الرد غير موجود.':'تم حذف الرد.');
+});
+add(new SlashCommandBuilder().setName('autoreply-list').setDescription('List autoreplies').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild), async i=>{
+  const rows=guildData(i.guild.id).settings.autoreplies||[];await i.reply({embeds:[embed('Auto Replies',rows.length?rows.map(x=>x.trigger+' -> '+x.reply).join('\n'):'لا توجد ردود.') ]});
+});
+
+add(new SlashCommandBuilder().setName('remind-cancel').setDescription('Cancel a reminder')
+  .addStringOption(o=>o.setName('id').setDescription('Reminder ID').setRequired(true)), async i=>{
+    const id=i.options.getString('id'),before=db.reminders.length;db.reminders=db.reminders.filter(r=>!(r.id===id&&r.guildId===i.guild.id&&r.userId===i.user.id));save();
+    await i.reply(before===db.reminders.length?'التذكير غير موجود.':'تم إلغاء التذكير.');
+});
+
+add(new SlashCommandBuilder().setName('schedule').setDescription('Schedule a message').setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+  .addIntegerOption(o=>o.setName('minutes').setDescription('Minutes from now').setMinValue(1).setMaxValue(525600).setRequired(true))
+  .addStringOption(o=>o.setName('message').setDescription('Message').setRequired(true)), async i=>{
+    const gd=guildData(i.guild.id);gd.scheduled??=[];const job={id:Date.now().toString(36),guildId:i.guild.id,channelId:i.channel.id,userId:i.user.id,at:Date.now()+i.options.getInteger('minutes')*60000,message:i.options.getString('message'),running:false};
+    gd.scheduled.push(job);save();await i.reply('تمت جدولة الرسالة.');
+});
+add(new SlashCommandBuilder().setName('scheduled').setDescription('List scheduled messages').setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages), async i=>{
+  const rows=guildData(i.guild.id).scheduled||[];await i.reply({embeds:[embed('Scheduled',rows.length?rows.map(x=>x.id+' — <t:'+Math.floor(x.at/1000)+':R> — '+x.message).join('\n'):'لا توجد رسائل مجدولة.')]});
+});
+add(new SlashCommandBuilder().setName('schedule-cancel').setDescription('Cancel scheduled message').setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+  .addStringOption(o=>o.setName('id').setDescription('Job ID').setRequired(true)), async i=>{
+    const gd=guildData(i.guild.id),before=gd.scheduled.length;gd.scheduled=gd.scheduled.filter(x=>x.id!==i.options.getString('id'));save();
+    await i.reply(before===gd.scheduled.length?'الجدولة غير موجودة.':'تم إلغاء الجدولة.');
+});
+
+add(new SlashCommandBuilder().setName('level-reward').setDescription('Set a level reward role').setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+  .addIntegerOption(o=>o.setName('level').setDescription('Level').setMinValue(1).setMaxValue(1000).setRequired(true))
+  .addRoleOption(o=>o.setName('role').setDescription('Reward role').setRequired(true)), async i=>{
+    const gd=guildData(i.guild.id);gd.levelRewards??={};gd.levelRewards[String(i.options.getInteger('level'))]=i.options.getRole('role').id;save();await i.reply('تم حفظ مكافأة المستوى.');
+});
+
 const ticketButtons = type => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setCustomId('ticket:create:'+type).setLabel({support:'Support',bug:'Bug Report',partnership:'Partnership',developer:'Developer Support'}[type]).setEmoji({support:'🎫',bug:'🐛',partnership:'🤝',developer:'🛠️'}[type]).setStyle(ButtonStyle.Primary)
 );
