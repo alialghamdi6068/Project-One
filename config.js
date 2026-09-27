@@ -41,7 +41,7 @@ module.exports = {
     restore: { enabled: false, snapshotIntervalMs: 60000, maxSnapshots: 25 }
   },
   commands: { cooldownMs: 1500, customPermissions: {} },
-  tickets: {
+  automod: {
     enabled: true, badWords: [], deleteMessages: true, warnOnViolation: true,
     maxWarnings: 3, timeoutMs: 600000
   },
