@@ -578,9 +578,9 @@ client.on('messageCreate',async m=>{
   try{await c.run(fake);await sendLog(m.guild,'command',m.author.tag+' used !'+raw);}catch(e){console.error('[Prefix]',e);await m.reply('حدث خطأ أثناء تنفيذ الأمر.').catch(()=>{});}
 });
 
-async function createTicket(i,type){
+async function createTicket(i,type){ if(!ticketConfiguredType(type))return commandError(i,'نوع التذكرة غير مفعّل.');
   const busyKey=i.guild.id+':'+i.user.id;if(ticketBusy.has(busyKey))return commandError(i,'جاري إنشاء تذكرتك، انتظر لحظة.');ticketBusy.add(busyKey);try{
-  const gd=guildData(i.guild.id);const existing=i.guild.channels.cache.find(c=>c.topic?.includes('ticket-owner:'+i.user.id)&&c.topic?.includes('ticket-status:open'));if(existing)return commandError(i,'عندك تذكرة مفتوحة بالفعل: '+existing);
+  const gd=guildData(i.guild.id);const existing=i.guild.channels.cache.find(c=>c.topic?.includes('ticket-owner:'+i.user.id)&&c.topic?.includes('ticket-status:open'));const openCount=i.guild.channels.cache.filter(c=>c.topic?.includes('ticket-owner:'+i.user.id)&&c.topic?.includes('ticket-status:open')).size;if(openCount>=(config.tickets.maxOpenPerUser||1))return commandError(i,'عندك الحد الأقصى من التذاكر المفتوحة.');
   gd.ticketCounter++;const name=config.tickets.naming.replace('{number}',String(gd.ticketCounter)).replace('{user}',i.user.username).replace('{type}',type).slice(0,90);
   const ow=[{id:i.guild.roles.everyone.id,deny:['ViewChannel']},{id:i.user.id,allow:['ViewChannel','SendMessages','ReadMessageHistory','AttachFiles']}];if(config.tickets.staffRoleId)ow.push({id:config.tickets.staffRoleId,allow:['ViewChannel','SendMessages','ReadMessageHistory','ManageMessages']});
   const ch=await i.guild.channels.create({name,type:ChannelType.GuildText,parent:config.tickets.categoryId||undefined,topic:'ticket-owner:'+i.user.id+';ticket-type:'+type+';ticket-status:open;ticket-number:'+gd.ticketCounter,permissionOverwrites:ow});db.tickets[ch.id]={guildId:i.guild.id,channelId:ch.id,ownerId:i.user.id,type,status:'open',number:gd.ticketCounter,created:Date.now(),lastActivity:Date.now(),claimedBy:null};save();
@@ -642,4 +642,29 @@ setInterval(async()=>{
 process.on('unhandledRejection',e=>console.error('[Unhandled]',e));
 process.on('uncaughtException',e=>console.error('[Uncaught]',e));
 if(!process.env.DISCORD_TOKEN){console.error('Missing DISCORD_TOKEN');process.exit(1);}
+
+function dbValidate(){
+  db.guilds??={};db.warnings??={};db.tickets??={};db.suggestions??={};db.giveaways??={};db.finishedGiveaways??={};
+  db.reminders??=[];db.economy??={};db.levels??={};db.schemaVersion??=2;
+  for(const [id,d] of Object.entries(db.tickets)) if(!d.guildId||!d.ownerId||!d.status) delete db.tickets[id];
+}
+dbValidate();
+
+async function safeSave(){ try{ save(); return true; }catch(e){ console.error('Database save failed:',e); return false; } }
+
+function ticketConfiguredType(type){
+  return Array.isArray(config.tickets.types)&&config.tickets.types.includes(type);
+}
+
+function ticketState(d, expected){
+  return !!d && d.status===expected;
+}
+
+async function updateTicketMessage(ch,d,title,description){
+  const m=await ch.messages.fetch({limit:20}).catch(()=>null);
+  const botMsg=m?.find(x=>x.author.id===client.user.id);
+  if(botMsg) await botMsg.edit({embeds:[embed(title,description)],components:d.status==='open'?[ticketButtons(d.type)]:[]}).catch(()=>{});
+}
+
+
 client.login(process.env.DISCORD_TOKEN);
