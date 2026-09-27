@@ -241,7 +241,7 @@ async function restoreSnapshot(guild){
   const p=protectionFor(guild); let restored=0,missing=0;
   for(const r of snap.roles) if(!guild.roles.cache.has(r.id)){
     if(!p.restore.autoRestoreDeletedRoles){missing++;continue;}
-    const created=await guild.roles.create({name:r.name,color:r.color,hoist:r.hoist,mentionable:r.mentionable,permissions:BigInt(r.permissions)}).catch(()=>null);
+    const created=await guild.roles.create({name:r.name,color:r.color,hoist:r.hoist,mentionable:r.mentionable,permissions:r.permissions}).catch(()=>null);
     if(created)restored++;
   }
   for(const c of snap.channels) if(!guild.channels.cache.has(c.id)){
@@ -436,10 +436,20 @@ client.on('guildMemberAdd',async m=>{
   await sendLog(m.guild,'memberJoin','Member joined: '+m.user.tag);
 });
 client.on('guildMemberRemove',async m=>{const s=guildData(m.guild.id).settings;if(s.goodbyeEnabled??config.goodbye.enabled){const c=m.guild.channels.cache.get(s.goodbyeChannelId||config.goodbye.channelId);if(c?.isTextBased())await c.send((s.goodbyeMessage||config.goodbye.message).replaceAll('{user}',m.user.toString()).replaceAll('{server}',m.guild.name)).catch(()=>{});}await sendLog(m.guild,'memberLeave','Member left: '+m.user.tag);});
-client.on('guildMemberUpdate',async(a,b)=>{if(a.roles.cache.size!==b.roles.cache.size)await sendLog(b.guild,'memberUpdate','Roles changed for '+b.user.tag);});
+client.on('guildMemberUpdate',async(a,b)=>{
+  if(a.roles.cache.size!==b.roles.cache.size)await sendLog(b.guild,'memberUpdate','Roles changed for '+b.user.tag);
+  const added=b.roles.cache.filter(r=>!a.roles.cache.has(r.id));
+  const dangerous=added.some(r=>r.permissions.has(PermissionFlagsBits.Administrator)||r.permissions.has(PermissionFlagsBits.ManageGuild)||r.permissions.has(PermissionFlagsBits.ManageChannels)||r.permissions.has(PermissionFlagsBits.ManageRoles));
+  if(dangerous)await antiNuke(b.guild,25,b.id,'MEMBER_ROLE_UPDATE');
+});
 client.on('channelCreate',async c=>{if(c.guild){await antiNuke(c.guild,10,c.id,'CHANNEL_CREATE');await sendLog(c.guild,'channel','Channel created: #'+c.name);}});
 client.on('channelDelete',c=>{if(c.guild){antiNuke(c.guild,12,c.id,'CHANNEL_DELETE');sendLog(c.guild,'channel','Channel deleted: #'+c.name,config.colors.warning);}});
 client.on('roleCreate',async r=>{if(r.guild){await antiNuke(r.guild,30,r.id,'ROLE_CREATE');await sendLog(r.guild,'role','Role created: '+r.name);}});
+client.on('roleUpdate',async(oldRole,newRole)=>{
+  const escalated=!oldRole.permissions.has(PermissionFlagsBits.Administrator)&&newRole.permissions.has(PermissionFlagsBits.Administrator);
+  if(escalated)await antiNuke(newRole.guild,31,newRole.id,'ROLE_UPDATE');
+  await sendLog(newRole.guild,'role','Role updated: '+newRole.name);
+});
 client.on('roleDelete',r=>{if(r.guild){antiNuke(r.guild,32,r.id,'ROLE_DELETE');sendLog(r.guild,'role','Role deleted: '+r.name,config.colors.warning);}});
 client.on('guildMemberRemove',async m=>{if(!m.guild)return;const gd=guildData(m.guild.id),p=protectionFor(m.guild),key=m.guild.id+':'+m.user.id+':MEMBER_KICK',now=Date.now();const arr=(auditActors.get(key)||[]).filter(t=>now-t<p.antiNuke.windowMs);const actor=await actorFromAudit(m.guild,20,m.user.id);if(actor&&actor.id!==client.user.id){const am=await fetchMember(m.guild,actor.id);if(!actorAllowed(am)){arr.push(now);auditActors.set(key,arr);if(arr.length>=p.antiNuke.maxActions){await punish(am,p.antiNuke.action,'Anti-Nuke: MEMBER_KICK').catch(()=>{});auditActors.delete(key);await sendLog(m.guild,'protection','Anti-Nuke triggered against '+actor.tag+' for MEMBER_KICK',config.colors.danger);}}}});
 client.on('webhookUpdate',async c=>{if(c.guild){await antiNuke(c.guild,50,null,'WEBHOOK_CREATE');await sendLog(c.guild,'webhook','Webhook activity detected in #'+c.name,config.colors.warning);}});
