@@ -37,7 +37,54 @@ client.on('guildMemberAdd',async m=>{if(config.autorole.enabled&&config.autorole
 client.on('guildMemberRemove',m=>{if(config.logs.events.memberLeave)log(m.guild,'Member left: '+m.user.tag)});
 client.on('messageDelete',m=>{if(m.guild&&config.logs.events.messageDelete)log(m.guild,'Message deleted in #'+(m.channel&&m.channel.name||'unknown'))});
 client.on('messageUpdate',(a,b)=>{if(b.guild&&a.content!==b.content&&config.logs.events.messageUpdate)log(b.guild,'Message edited in #'+(b.channel&&b.channel.name||'unknown'))});
-client.on('messageCreate',async m=>{if(!m.guild||m.author.bot)return;const now=Date.now(),key=m.guild.id+':'+m.author.id;if(config.protection.enabled&&config.protection.spam.enabled){const a=(spam.get(key)||[]).filter(t=>now-t<config.protection.spam.windowMs);a.push(now);spam.set(key,a);if(a.length>=config.protection.spam.maxMessages){await m.member.timeout(config.protection.spam.timeoutMs,'Anti-spam').catch(()=>{});spam.delete(key);log(m.guild,'Anti-spam action against '+m.author.tag,config.colors.warning);return}}if(config.automod.enabled&&config.automod.badWords.some(w=>m.content.toLowerCase().includes(w.toLowerCase()))){if(config.automod.deleteMessages)await m.delete().catch(()=>{});log(m.guild,'AutoMod violation by '+m.author.tag,config.colors.warning);return}if(!m.content.startsWith(config.bot.prefix))return;const p=m.content.slice(config.bot.prefix.length).trim().split(/\\s+/),raw=p.shift(),name=aliases[raw]||raw,c=commands.find(x=>x.data.name===name);if(!c)return;try{await m.reply('الأوامر الإدارية الأساسية متاحة عبر Slash Commands. استخدم /'+name)}catch(e){}});
+client.on('messageCreate',async m=>{
+  if(!m.guild||m.author.bot)return;
+  const now=Date.now(),key=m.guild.id+':'+m.author.id;
+  if(config.protection.enabled&&config.protection.spam.enabled){
+    const a=(spam.get(key)||[]).filter(t=>now-t<config.protection.spam.windowMs);
+    a.push(now);spam.set(key,a);
+    if(a.length>=config.protection.spam.maxMessages){
+      await m.member.timeout(config.protection.spam.timeoutMs,'Anti-spam').catch(()=>{});
+      spam.delete(key);log(m.guild,'Anti-spam action against '+m.author.tag,config.colors.warning);return
+    }
+  }
+  if(config.protection.enabled&&config.protection.mentions.enabled&&m.mentions.users.size>config.protection.mentions.maxMentions){
+    await m.delete().catch(()=>{});log(m.guild,'Mention protection triggered by '+m.author.tag,config.colors.warning);return
+  }
+  if(config.protection.enabled&&config.protection.links.enabled&&config.protection.links.blockInvites&&/discord\.gg\/|discord\.com\/invite\//i.test(m.content)){
+    await m.delete().catch(()=>{});log(m.guild,'Invite-link protection triggered by '+m.author.tag,config.colors.warning);return
+  }
+  if(config.protection.enabled&&config.protection.caps.enabled&&m.content.length>=config.protection.caps.minimumLength){
+    const letters=m.content.replace(/[^A-Za-z]/g,'');
+    const upper=letters.replace(/[^A-Z]/g,'');
+    if(letters.length&&upper.length/letters.length>=config.protection.caps.threshold){
+      await m.delete().catch(()=>{});log(m.guild,'Caps protection triggered by '+m.author.tag,config.colors.warning);return
+    }
+  }
+  if(config.automod.enabled&&config.automod.badWords.some(w=>m.content.toLowerCase().includes(w.toLowerCase()))){
+    if(config.automod.deleteMessages)await m.delete().catch(()=>{});
+    const k=m.guild.id+':'+m.author.id;
+    db.warnings[k]??=[];db.warnings[k].push({by:client.user.id,reason:'AutoMod violation',at:Date.now()});save();
+    log(m.guild,'AutoMod violation by '+m.author.tag,config.colors.warning);return
+  }
+  if(!m.content.startsWith(config.bot.prefix))return;
+  const p=m.content.slice(config.bot.prefix.length).trim().split(/\s+/),raw=(p.shift()||'').toLowerCase(),name=aliases[raw]||raw,c=commands.find(x=>x.data.name===name);
+  if(!c)return;
+  const required={ban:'BanMembers',kick:'KickMembers',timeout:'ModerateMembers',warn:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels','ticket-panel':'ManageChannels'};
+  if(required[name]&&!m.member.permissions.has(PermissionFlagsBits[required[name]]))return m.reply('ما عندك الصلاحية المطلوبة.');
+  const target=p[0]?await member(m.guild,p[0]):null;
+  const textArg=name==='suggest'?p.join(' '):p.slice(1).join(' ');
+  const fake={
+    guild:m.guild,channel:m.channel,user:m.author,client:client,member:m.member,
+    options:{
+      getUser:function(){return target?target.user:null},
+      getString:function(){return name==='suggest'?textArg:(textArg||null)},
+      getInteger:function(){return Number(p[0])||0}
+    },
+    reply:async function(payload){return m.reply(payload)}
+  };
+  try{await c.run(fake)}catch(e){console.error('[Prefix]',e);m.reply('حدث خطأ أثناء تنفيذ الأمر.').catch(()=>{})}
+});
 
 client.on('interactionCreate',async i=>{try{if(i.isChatInputCommand()){const c=commands.find(x=>x.data.name===i.commandName);if(c)await c.run(i);return}if(!i.isButton())return;if(i.customId==='ticket:create'){const existing=i.guild.channels.cache.find(c=>c.topic==='ticket-owner:'+i.user.id);if(existing)return i.reply({content:'عندك تذكرة مفتوحة بالفعل: '+existing,ephemeral:true});const g=gd(i.guild.id);g.ticketCounter++;const name=config.tickets.naming.replace('{number}',String(g.ticketCounter)).replace('{user}',i.user.username).slice(0,90);const ow=[{id:i.guild.roles.everyone.id,deny:['ViewChannel']},{id:i.user.id,allow:['ViewChannel','SendMessages','ReadMessageHistory','AttachFiles']}];if(config.tickets.staffRoleId)ow.push({id:config.tickets.staffRoleId,allow:['ViewChannel','SendMessages','ReadMessageHistory','ManageMessages']});const ch=await i.guild.channels.create({name:name,type:ChannelType.GuildText,parent:config.tickets.categoryId||undefined,topic:'ticket-owner:'+i.user.id,permissionOverwrites:ow});save();const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:close').setLabel('إغلاق').setEmoji('🔒').setStyle(ButtonStyle.Secondary),new ButtonBuilder().setCustomId('ticket:delete').setLabel('حذف').setEmoji('🗑️').setStyle(ButtonStyle.Danger));await ch.send({content:i.user.toString(),embeds:[em('Ticket','اكتب مشكلتك هنا. عند الانتهاء استخدم زر الإغلاق.')],components:[row]});return i.reply({content:'تم إنشاء التذكرة: '+ch,ephemeral:true})}if(i.customId==='ticket:close'){const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:confirm-close').setLabel('تأكيد الإغلاق').setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId('ticket:cancel-close').setLabel('إلغاء').setStyle(ButtonStyle.Secondary));return i.reply({content:'تأكيد إغلاق التذكرة؟',components:[row],ephemeral:true})}if(i.customId==='ticket:cancel-close')return i.update({content:'تم إلغاء الإغلاق.',components:[]});if(i.customId==='ticket:confirm-close'){const id=(i.channel.topic||'').split('ticket-owner:')[1];if(id)await i.channel.permissionOverwrites.edit(id,{ViewChannel:false,SendMessages:false}).catch(()=>{});const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:reopen').setLabel('إعادة فتح').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('ticket:delete').setLabel('حذف').setStyle(ButtonStyle.Danger));await i.channel.send({embeds:[em('Ticket Closed','تم إغلاق التذكرة بواسطة '+i.user+'.')],components:[row]});return i.update({content:'تم إغلاق التذكرة.',components:[]})}if(i.customId==='ticket:reopen'){const id=(i.channel.topic||'').split('ticket-owner:')[1];if(id)await i.channel.permissionOverwrites.edit(id,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true}).catch(()=>{});return i.reply({embeds:[em('Ticket Reopened','تمت إعادة فتح التذكرة.',config.colors.success)]})}if(i.customId==='ticket:delete'){if(!i.member.permissions.has(PermissionFlagsBits.ManageChannels)&&!owner(i.user.id))return i.reply({content:'حذف التذكرة متاح للإدارة فقط.',ephemeral:true});await i.reply('سيتم حذف التذكرة...');setTimeout(()=>i.channel.delete().catch(()=>{}),1000)}}catch(e){console.error('[Interaction]',e);if(!i.replied&&!i.deferred)i.reply({content:'حدث خطأ أثناء تنفيذ العملية.',ephemeral:true}).catch(()=>{})}});
 process.on('unhandledRejection',e=>console.error(e));
