@@ -5,7 +5,7 @@ const path = require('node:path');
 const {
   Client, GatewayIntentBits, Partials, REST, Routes,
   SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle
 } = require('discord.js');
 const config = require('../config');
 
@@ -73,6 +73,9 @@ async function sendLog(guild, event, text, color = config.colors.info) {
   const c = guild.channels.cache.get(channelId);
   if (c?.isTextBased()) await c.send({ embeds: [embed('Audit Log', text, color)] }).catch(() => {});
 }
+const cooldowns = new Map();
+function commandCooldown(userId, name, ms=1500) { const k=userId+':'+name,n=Date.now(),last=cooldowns.get(k)||0; if(n-last<ms)return Math.ceil((ms-(n-last))/1000); cooldowns.set(k,n); return 0; }
+function safeText(v,max=1900){return String(v??'').slice(0,max);}
 function commandError(i, text) {
   return i.replied || i.deferred ? i.followUp({ content: text, ephemeral: true }) : i.reply({ content: text, ephemeral: true });
 }
@@ -88,14 +91,14 @@ const commands = [];
 const add = (data, run) => commands.push({ data, run });
 
 add(new SlashCommandBuilder().setName('ping').setDescription('Show bot latency'), async i => i.reply('Pong! ' + i.client.ws.ping + 'ms'));
-add(new SlashCommandBuilder().setName('help').setDescription('Show all commands'), async i => i.reply({ embeds: [embed('Project One', [
+add(new SlashCommandBuilder().setName('help').setDescription('Interactive command center'), async i => i.reply({ embeds: [embed('Project One — Command Center', [
   '**Moderation:** ban, kick, unban, timeout, untimeout, warn, warnings, clear, lock, unlock, slowmode',
   '**Protection:** lockdown, protection',
   '**Tickets:** ticket-panel',
   '**Admin:** welcome, autorole, autoreply, announce, remind',
   '**Community:** suggest, giveaway, level, balance, daily, afk',
   '**Utility:** ping, help, server, user, role, member'
-].join('\n'))] }));
+].join('\n'))], components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('help:category').setPlaceholder('اختر قسم الأوامر').addOptions([{label:'Moderation',value:'moderation',emoji:'🛡️'},{label:'Protection',value:'protection',emoji:'🔐'},{label:'Tickets',value:'tickets',emoji:'🎫'},{label:'Community',value:'community',emoji:'🎮'},{label:'Utility',value:'utility',emoji:'⚙️'}]))] }));
 add(new SlashCommandBuilder().setName('server').setDescription('Server information'), async i => i.reply({ embeds: [embed('Server Information',
   '**Name:** ' + i.guild.name + '\n**Owner:** <@' + i.guild.ownerId + '>\n**Members:** ' + i.guild.memberCount +
   '\n**Channels:** ' + i.guild.channels.cache.size + '\n**Roles:** ' + i.guild.roles.cache.size)] }));
@@ -260,10 +263,15 @@ add(new SlashCommandBuilder().setName('afk').setDescription('Set or clear AFK').
   db.afk[i.guild.id+':'+i.user.id]={reason:i.options.getString('reason')||'AFK',at:Date.now()};save();await i.reply('تم تفعيل AFK.');
 });
 
-const aliases={
+
+add(new SlashCommandBuilder().setName('bot-info').setDescription('Show bot status and system information'), async i=>{await i.reply({embeds:[embed('Project One — System Status','**Servers:** '+i.client.guilds.cache.size+'\\n**Commands:** '+commands.length+'\\n**Latency:** '+i.client.ws.ping+'ms\\n**Node:** '+process.version+'\\n**Uptime:** '+Math.floor(process.uptime()/60)+' minutes',config.colors.info)]});});
+add(new SlashCommandBuilder().setName('protection-whitelist').setDescription('Manage protection whitelist').setDefaultMemberPermissions(PermissionFlagsBits.Administrator).addStringOption(o=>o.setName('action').setDescription('add/remove').setRequired(true).addChoices({name:'add',value:'add'},{name:'remove',value:'remove'})).addUserOption(o=>o.setName('user').setDescription('User').setRequired(true)), async i=>{const u=i.options.getUser('user'),a=i.options.getString('action'),s=guildData(i.guild.id).settings;s.protectionWhitelist??=[];if(a==='add'&&!s.protectionWhitelist.includes(u.id))s.protectionWhitelist.push(u.id);if(a==='remove')s.protectionWhitelist=s.protectionWhitelist.filter(x=>x!==u.id);save();await i.reply('تم تحديث قائمة الحماية.');});
+add(new SlashCommandBuilder().setName('reminders').setDescription('List your reminders'), async i=>{const x=db.reminders.filter(r=>r.guildId===i.guild.id&&r.userId===i.user.id);await i.reply({embeds:[embed('Reminders',x.length?x.map(r=>'• '+r.text+' — <t:'+Math.floor(r.at/1000)+':R>').join('\\n'):'لا توجد تذكيرات.')]});});
+add(new SlashCommandBuilder().setName('giveaway-end').setDescription('End a giveaway').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addStringOption(o=>o.setName('message_id').setDescription('Giveaway message ID').setRequired(true)), async i=>{const id=i.options.getString('message_id'),g=db.giveaways[id];if(!g)return commandError(i,'السحب غير موجود.');g.ends=0;save();await i.reply('تم إنهاء السحب، وستظهر النتيجة قريبًا.');});
+\nconst aliases={
   'مساعدة':'help','اوامر':'help','بنج':'ping','معلومات':'server','باند':'ban','حظر':'ban','كيك':'kick','طرد':'kick',
   'تحذير':'warn','تحذيرات':'warnings','مسح':'clear','قفل':'lock','فتح':'unlock','سلو':'slowmode','تكت':'ticket-panel',
-  'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','اعدادات':'settings','لوق':'log-channel','اقتراحات':'suggest-channel','وداع':'goodbye','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
+  'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','اعدادات':'settings','معلومات-البوت':'bot-info','قائمة-التذكيرات':'reminders','انهاء-السحب':'giveaway-end','لوق':'log-channel','اقتراحات':'suggest-channel','وداع':'goodbye','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
   'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role'
 };
 
@@ -368,8 +376,8 @@ async function transcript(ch){
 
 client.on('interactionCreate',async i=>{
   try{
-    if(i.isChatInputCommand()){const c=commands.find(x=>x.data.name===i.commandName);if(c)await c.run(i);return;}
-    if(!i.isButton())return;
+    if(i.isChatInputCommand()){const c=commands.find(x=>x.data.name===i.commandName);if(!c)return;const wait=commandCooldown(i.user.id,i.commandName);if(wait)return commandError(i,'انتظر '+wait+' ثانية قبل تكرار الأمر.');await c.run(i);return;}
+    if(i.isStringSelectMenu()&&i.customId==='help:category'){const map={moderation:'ban, kick, timeout, warn, warnings, clear, lock, unlock, slowmode, role',protection:'protection, lockdown, protection-whitelist',tickets:'ticket-panel, ticket-add, ticket-remove, ticket-transfer, ticket-stats',community:'suggest, giveaway, giveaway-end, level, balance, daily, afk',utility:'ping, server, user, member, bot-info, settings'};return i.update({embeds:[embed('Command Center — '+i.values[0],map[i.values[0]])],components:i.message.components});} if(!i.isButton())return;
     if(i.customId.startsWith('ticket:create:'))return createTicket(i,i.customId.split(':')[2]);
     if(i.customId==='ticket:close'){const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:confirm-close').setLabel('تأكيد الإغلاق').setStyle(ButtonStyle.Danger),new ButtonBuilder().setCustomId('ticket:cancel-close').setLabel('إلغاء').setStyle(ButtonStyle.Secondary));return i.reply({content:'تأكيد إغلاق التذكرة؟',components:[row],ephemeral:true});}
     if(i.customId==='ticket:cancel-close')return i.update({content:'تم إلغاء الإغلاق.',components:[]});
