@@ -165,6 +165,22 @@ add(new SlashCommandBuilder().setName('lockdown').setDescription('Lock or unlock
   .addBooleanOption(o=>o.setName('enabled').setDescription('Enable lockdown').setRequired(true)), async i=>{
     const enabled=i.options.getBoolean('enabled'),gd=guildData(i.guild.id); for(const c of i.guild.channels.cache.values()) if(c.type===ChannelType.GuildText) await c.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:enabled?false:null}).catch(()=>{}); gd.settings.lockdown=enabled; save(); await i.reply(enabled?'تم تفعيل الإغلاق العام.':'تم إلغاء الإغلاق العام.'); await sendLog(i.guild,'protection',i.user.tag+' set lockdown='+enabled,config.colors.warning);
 });
+add(new SlashCommandBuilder().setName('settings').setDescription('Show server bot settings').setDefaultMemberPermissions(PermissionFlagsBits.Administrator), async i=>{
+  const s=guildData(i.guild.id).settings;
+  await i.reply({embeds:[embed('Server Settings','**Log Channel:** '+(s.logChannelId?'<#'+s.logChannelId+'>':'Not set')+'\n**Welcome:** '+(s.welcomeEnabled??config.welcome.enabled?'ON':'OFF')+'\n**Autorole:** '+(s.autoroleEnabled??config.autorole.enabled?'ON':'OFF')+'\n**Lockdown:** '+(s.lockdown?'ON':'OFF')+'\n**Ticket Counter:** '+guildData(i.guild.id).ticketCounter)]});
+});
+add(new SlashCommandBuilder().setName('log-channel').setDescription('Set the audit log channel').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addChannelOption(o=>o.setName('channel').setDescription('Log channel').addChannelTypes(ChannelType.GuildText).setRequired(true)), async i=>{
+  guildData(i.guild.id).settings.logChannelId=i.options.getChannel('channel').id;save();await i.reply('تم تعيين قناة اللوق.');
+});
+add(new SlashCommandBuilder().setName('suggest-channel').setDescription('Set the suggestions channel').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addChannelOption(o=>o.setName('channel').setDescription('Suggestions channel').addChannelTypes(ChannelType.GuildText).setRequired(true)), async i=>{
+  guildData(i.guild.id).settings.suggestionChannelId=i.options.getChannel('channel').id;save();await i.reply('تم تعيين قناة الاقتراحات.');
+});
+add(new SlashCommandBuilder().setName('goodbye').setDescription('Configure goodbye messages').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addChannelOption(o=>o.setName('channel').setDescription('Channel').addChannelTypes(ChannelType.GuildText)).addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)).addStringOption(o=>o.setName('message').setDescription('Message')), async i=>{
+  const s=guildData(i.guild.id).settings;s.goodbyeEnabled=i.options.getBoolean('enabled');s.goodbyeChannelId=i.options.getChannel('channel')?.id||s.goodbyeChannelId;s.goodbyeMessage=i.options.getString('message')||config.goodbye.message;save();await i.reply('تم حفظ إعدادات المغادرة.');
+});
+add(new SlashCommandBuilder().setName('autorole-remove').setDescription('Disable autorole').setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles), async i=>{
+  const s=guildData(i.guild.id).settings;s.autoroleEnabled=false;save();await i.reply('تم تعطيل الرتبة التلقائية.');
+});
 add(new SlashCommandBuilder().setName('protection').setDescription('Show protection status').setDefaultMemberPermissions(PermissionFlagsBits.Administrator), async i=>{
   const p=config.protection; await i.reply({embeds:[embed('Protection Status','**Global:** '+(p.enabled?'ON':'OFF')+'\n**Anti-Spam:** '+(p.spam.enabled?'ON':'OFF')+'\n**Anti-Raid:** '+(p.raid.enabled?'ON':'OFF')+'\n**Anti-Nuke:** '+(p.antiNuke.enabled?'ON':'OFF')+'\n**Anti-Bot:** '+(p.antiBot.enabled?'ON':'OFF')+'\n**Invite Filter:** '+(p.links.enabled?'ON':'OFF'))]});
 });
@@ -247,7 +263,7 @@ add(new SlashCommandBuilder().setName('afk').setDescription('Set or clear AFK').
 const aliases={
   'مساعدة':'help','اوامر':'help','بنج':'ping','معلومات':'server','باند':'ban','حظر':'ban','كيك':'kick','طرد':'kick',
   'تحذير':'warn','تحذيرات':'warnings','مسح':'clear','قفل':'lock','فتح':'unlock','سلو':'slowmode','تكت':'ticket-panel',
-  'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
+  'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','اعدادات':'settings','لوق':'log-channel','اقتراحات':'suggest-channel','وداع':'goodbye','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
   'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role'
 };
 
@@ -293,9 +309,9 @@ client.on('guildMemberAdd',async m=>{
 });
 client.on('guildMemberRemove',async m=>{const s=guildData(m.guild.id).settings;if(s.goodbyeEnabled??config.goodbye.enabled){const c=m.guild.channels.cache.get(s.goodbyeChannelId||config.goodbye.channelId);if(c?.isTextBased())await c.send((s.goodbyeMessage||config.goodbye.message).replaceAll('{user}',m.user.toString()).replaceAll('{server}',m.guild.name)).catch(()=>{});}await sendLog(m.guild,'memberLeave','Member left: '+m.user.tag);});
 client.on('guildMemberUpdate',async(a,b)=>{if(a.roles.cache.size!==b.roles.cache.size)await sendLog(b.guild,'memberUpdate','Roles changed for '+b.user.tag);});
-client.on('channelCreate',c=>{if(c.guild)antiNuke(c.guild,12,c.id,'CHANNEL_DELETE');});
-client.on('channelDelete',c=>{if(c.guild)antiNuke(c.guild,12,c.id,'CHANNEL_DELETE');});
-client.on('roleCreate',r=>{if(r.guild)sendLog(r.guild,'role','Role created: '+r.name);});
+client.on('channelCreate',c=>{if(c.guild)sendLog(c.guild,'channel','Channel created: #'+c.name);});
+client.on('channelDelete',c=>{if(c.guild){antiNuke(c.guild,12,c.id,'CHANNEL_DELETE');sendLog(c.guild,'channel','Channel deleted: #'+c.name,config.colors.warning);}});
+client.on('roleCreate',r=>{if(r.guild){sendLog(r.guild,'role','Role created: '+r.name);}});
 client.on('roleDelete',r=>{if(r.guild){antiNuke(r.guild,32,r.id,'ROLE_DELETE');sendLog(r.guild,'role','Role deleted: '+r.name,config.colors.warning);}});
 client.on('webhookUpdate',async c=>{if(c.guild){await antiNuke(c.guild,50,null,'WEBHOOK_CREATE');await sendLog(c.guild,'webhook','Webhook activity detected in #'+c.name,config.colors.warning);}});
 client.on('guildBanAdd',async b=>{await antiNuke(b.guild,22,b.user.id,'MEMBER_BAN_ADD');});
