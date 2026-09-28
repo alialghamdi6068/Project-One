@@ -48,8 +48,21 @@ if (duplicates.length) {
   throw new Error('Duplicate slash commands: ' + duplicates.join(', '));
 }
 
-if (slashNames.length < 50) {
-  throw new Error('Unexpectedly low slash-command count: ' + slashNames.length);
+const generatedCommands = ['ban', 'kick', 'lock', 'unlock'];
+const literalPlusGenerated = new Set([...slashNames, ...generatedCommands]);
+if (literalPlusGenerated.size !== 66) {
+  throw new Error('Expected 66 slash commands, found ' + literalPlusGenerated.size);
+}
+for (const name of generatedCommands) {
+  if (!source.includes("setName('" + name + "')") && !source.includes("modCommand('" + name + "'") && !source.includes("[['lock',true],['unlock',false]]")) {
+    throw new Error('Generated command definition missing: ' + name);
+  }
+}
+if (!source.includes("getUser:n=>values[n]?.user??values[n]??null")) {
+  throw new Error('Prefix user option adapter is broken');
+}
+if (!source.includes("if(cursor<args.length)throw new Error('Too many arguments.')")) {
+  throw new Error('Prefix extra-argument validation is missing');
 }
 
 if (pkg.engines?.node !== '>=20.0.0') {
