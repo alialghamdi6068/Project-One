@@ -709,6 +709,8 @@ async function buildPrefixOptions(command,args,guild){
     }
     if(option.type===4){
       const value=Number(raw); if(!Number.isInteger(value))throw new Error('Invalid integer for '+option.name);
+      if(option.min_value!=null&&value<option.min_value)throw new Error(option.name+' is below the minimum.');
+      if(option.max_value!=null&&value>option.max_value)throw new Error(option.name+' is above the maximum.');
       values[option.name]=value;
     }else if(option.type===5){
       if(!['true','false'].includes(String(raw).toLowerCase()))throw new Error('Invalid boolean for '+option.name);
@@ -716,17 +718,24 @@ async function buildPrefixOptions(command,args,guild){
     }else if(option.type===6){
       const member=await fetchMember(guild,raw);
       if(!member)throw new Error('User not found: '+raw);
-      values[option.name]=member.user;
+      values[option.name]=member;
     }else if(option.type===7){
       const id=String(raw).replace(/[<#>]/g,''); values[option.name]=guild.channels.cache.get(id)||null;
       if(!values[option.name])throw new Error('Channel not found: '+raw);
     }else if(option.type===8){
       const id=String(raw).replace(/[<@&>]/g,''); values[option.name]=guild.roles.cache.get(id)||null;
       if(!values[option.name])throw new Error('Role not found: '+raw);
+    }else if(option.type===9){
+      const id=String(raw).replace(/[<@!&>]/g,'');
+      const user=await guild.client.users.fetch(id).catch(()=>null);
+      if(!user)throw new Error('Mentionable not found: '+raw);
+      values[option.name]=user;
     }else{
       values[option.name]=raw;
+      if(Array.isArray(option.choices)&&option.choices.length&&!option.choices.some(c=>c.value===raw))throw new Error('Invalid choice for '+option.name+'.');
     }
   }
+  if(cursor<args.length)throw new Error('Too many arguments.');
   return values;
 }
   if(!m.guild||!m.content.startsWith(config.bot.prefix))return;
@@ -740,8 +749,8 @@ async function buildPrefixOptions(command,args,guild){
   try{
     const values=await buildPrefixOptions(c,args,m.guild);
     const fake={guild:m.guild,channel:m.channel,user:m.author,member:m.member,client,options:{
-      getUser:n=>values[n]?.user||null,
-      getMember:n=>values[n]||null,
+      getUser:n=>values[n]?.user??values[n]??null,
+      getMember:n=>values[n]?.user?values[n]:null,
       getString:n=>values[n]??null,
       getInteger:n=>values[n]??null,
       getBoolean:n=>values[n]??null,
@@ -749,7 +758,7 @@ async function buildPrefixOptions(command,args,guild){
       getChannel:n=>values[n]??null,
       getMentionable:n=>values[n]??null
     },reply:p=>m.reply(p),followUp:p=>m.reply(p),deferReply:async()=>{},editReply:p=>m.reply(p)};
-    await c.run(fake);await sendLog(m.guild,m.author.tag+' used !'+raw);
+    await c.run(fake);await sendLog(m.guild,'command',m.author.tag+' used '+config.bot.prefix+raw);
   }catch(e){console.error('[Prefix]',e);await m.reply('الاستخدام غير صحيح أو حدث خطأ: '+String(e.message||e).slice(0,180)).catch(()=>{});}
 });
 
