@@ -620,7 +620,7 @@ client.on('guildAuditLogEntryCreate',async(entry,guild)=>{
   const label=map[entry.actionType];
   if(label){await antiNuke(guild,entry.actionType,entry.targetId,label);await sendLog(guild,'webhook','Webhook audit event: '+label,config.colors.warning);}
 });
-client.on('guildMemberRemove',async m=>{if(!m.guild)return;const gd=guildData(m.guild.id),p=protectionFor(m.guild),key=m.guild.id+':'+m.user.id+':MEMBER_KICK',now=Date.now();const arr=(auditActors.get(key)||[]).filter(t=>now-t<p.antiNuke.windowMs);const actor=await actorFromAudit(m.guild,20,m.user.id);if(actor&&actor.id!==client.user.id){const am=await fetchMember(m.guild,actor.id);if(!actorAllowed(am)){arr.push(now);auditActors.set(key,arr);if(arr.length>=p.antiNuke.maxActions){await punish(am,p.antiNuke.action,'Anti-Nuke: MEMBER_KICK').catch(()=>{});auditActors.delete(key);await sendLog(m.guild,'protection','Anti-Nuke triggered against '+actor.tag+' for MEMBER_KICK',config.colors.danger);}}}});
+
 client.on('webhooksUpdate',async c=>{if(c.guild)await sendLog(c.guild,'webhook','Webhook configuration changed in #'+c.name,config.colors.warning);});
 client.on('guildBanAdd',async b=>{await antiNuke(b.guild,22,b.user.id,'MEMBER_BAN_ADD');});
 client.on('messageDelete',async m=>{if(m.guild)await sendLog(m.guild,'messageDelete','Message deleted in #'+(m.channel?.name||'unknown')+(m.author?' by '+m.author.tag:''),config.colors.warning);});
