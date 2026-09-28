@@ -31,7 +31,11 @@ for (const marker of [
   "setName('economy-admin')",
   'guildAuditLogEntryCreate',
   'Ticket Auto-Closed',
-  'delete db.tickets[c.id]'
+  'delete db.tickets[c.id]',
+  'g.guildId!==i.guild.id',
+  "r.type==='domain'",
+  'config.tickets.types||[]',
+  'client.login(process.env.DISCORD_TOKEN).catch'
 ]) {
   if (!source.includes(marker)) throw new Error('Missing required marker: ' + marker);
 }
