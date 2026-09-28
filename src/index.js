@@ -555,27 +555,37 @@ client.once('ready',async()=>{
   client.user.setActivity(String(config.bot.activity).slice(0,128));
   console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
   const commandData=commands.map(c=>c.data.toJSON());
+  console.log('[Project One] Preparing '+commandData.length+' slash commands.');
   try {
-    const deployGuildId=process.env.GUILD_ID?.trim();
-    if(deployGuildId){
-      const guild=client.guilds.cache.get(deployGuildId) || await client.guilds.fetch(deployGuildId).catch(()=>null);
-      if(!guild) throw new Error('GUILD_ID is not a guild the bot can access.');
-      await guild.commands.set(commandData);
-      console.log('[Project One] Registered '+commandData.length+' slash commands in guild '+guild.id+'.');
-    } else if(client.guilds.cache.size){
-      let registered=0;
-      for(const guild of client.guilds.cache.values()){
+    // Always deploy directly to every guild the bot can access. This avoids stale
+    // global commands and avoids relying on a possibly outdated GUILD_ID value.
+    let registered=0;
+    for(const guild of client.guilds.cache.values()){
+      try {
         await guild.commands.set(commandData);
         registered++;
-        console.log('[Project One] Registered '+commandData.length+' slash commands in guild '+guild.id+'.');
+        console.log('[Project One] Registered '+commandData.length+' slash commands in guild '+guild.id+' ('+guild.name+').');
+      } catch(e) {
+        console.error('[Commands] Failed to register commands in guild '+guild.id+' ('+guild.name+'):',e?.stack||e);
       }
-      console.log('[Project One] Slash commands registered in '+registered+' guild(s).');
-    } else {
-      await client.application.commands.set(commandData);
-      console.log('[Project One] Registered '+commandData.length+' global slash commands. Global command updates can take time to appear in Discord.');
     }
+
+    // Remove old global commands so stale command sets cannot remain visible.
+    try {
+      await client.application.commands.set([]);
+      console.log('[Project One] Cleared stale global slash commands.');
+    } catch(e) {
+      console.warn('[Commands] Could not clear global commands:',e?.message||e);
+    }
+
+    if(!registered && !client.guilds.cache.size){
+      await client.application.commands.set(commandData);
+      console.log('[Project One] No guild cache available; registered '+commandData.length+' global slash commands.');
+    }
+
+    console.log('[Project One] Slash command deployment finished: '+registered+'/'+client.guilds.cache.size+' guild(s). '+commandData.length+' command(s) each.');
   } catch(e) {
-    console.error('[Commands] Slash command registration failed:',e?.stack||e);
+    console.error('[Commands] Slash command deployment failed:',e?.stack||e);
   }
 });
 
