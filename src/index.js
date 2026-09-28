@@ -504,7 +504,7 @@ add(new SlashCommandBuilder().setName('level').setDescription('Show your level')
   const u=i.options.getUser('user')||i.user,k=i.guild.id+':'+u.id,d=db.levels[k]||{xp:0,level:0};await i.reply({embeds:[embed('Level',u+'\n**Level:** '+d.level+'\n**XP:** '+d.xp)]});
 });
 add(new SlashCommandBuilder().setName('balance').setDescription('Show balance').addUserOption(o=>o.setName('user').setDescription('User')), async i=>{
-  const u=i.options.getUser('user')||i.user,k=i.guild.id+':'+u.id;db.economy[k]??={balance:0,lastDaily:0};save();const eco=economyFor(i.guild); db.economy[k]??={balance:eco.startingBalance,lastDaily:0,transactions:[]}; await i.reply('**'+u.tag+'** has **'+db.economy[k].balance+' '+eco.currency+'**.');
+  const u=i.options.getUser('user')||i.user,k=i.guild.id+':'+u.id;const eco=economyFor(i.guild); db.economy[k]??={balance:eco.startingBalance,lastDaily:0,transactions:[]}; await i.reply('**'+u.tag+'** has **'+db.economy[k].balance+' '+eco.currency+'**.');
 });
 add(new SlashCommandBuilder().setName('daily').setDescription('Claim daily credits'), async i=>{
   const k=i.guild.id+':'+i.user.id,eco=economyFor(i.guild);db.economy[k]??={balance:eco.startingBalance,lastDaily:0,transactions:[]};if(Date.now()-db.economy[k].lastDaily<eco.dailyCooldownMs)return commandError(i,'استلمت مكافأتك اليومية مسبقًا.');db.economy[k].balance+=eco.dailyAmount;db.economy[k].lastDaily=Date.now();save();await i.reply('تمت إضافة **'+eco.dailyAmount+' '+eco.currency+'** إلى رصيدك.');
@@ -739,6 +739,7 @@ client.on('interactionCreate',async i=>{
       const [,action,id]=i.customId.split(':');db.suggestions??={};const d=db.suggestions[id];
       if(!d)return commandError(i,'الاقتراح غير موجود.');
       if(action==='vote-up'||action==='vote-down'){
+        if(action==='vote-down'&&config.suggestions.allowDownvote===false)return commandError(i,'التصويت السلبي معطل.');
         if(d.status!=='pending')return commandError(i,'الاقتراح مغلق.');
         d.voters??={}; if(d.voters[i.user.id])return commandError(i,'سبق لك التصويت.');
         d.voters[i.user.id]=action==='vote-up'?'up':'down';d.votes??={up:[],down:[]};
