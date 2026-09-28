@@ -24,7 +24,7 @@ Production-oriented Discord bot built with Discord.js 14 and Node.js 20+.
 1. Install Node.js 20 or newer.
 2. Run `npm install`.
 3. Copy `.env.example` to `.env`.
-4. Set `DISCORD_TOKEN`, `CLIENT_ID` and `OWNER_IDS`.
+4. Set `DISCORD_TOKEN` and `OWNER_IDS`. The bot automatically uses the first guild it can access for fast slash-command registration.
 5. Start with `npm start`.
 
 ## Configuration
