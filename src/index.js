@@ -719,7 +719,7 @@ async function buildPrefixOptions(command,args,guild){
   }
   return values;
 }
-client.on('messageCreate',async m=>{  if(!m.guild||!m.content.startsWith(config.bot.prefix))return;
+  if(!m.guild||!m.content.startsWith(config.bot.prefix))return;
   const resolved=resolvePrefixCommand(m.content.slice(config.bot.prefix.length));
   if(!resolved)return;
   const {raw,name,command:c,args}=resolved;
