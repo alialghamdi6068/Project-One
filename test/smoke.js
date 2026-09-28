@@ -14,14 +14,14 @@ const source = fs.readFileSync('src/index.js', 'utf8');
 
 if ((source.match(/client\.login/g) || []).length !== 1) throw new Error('Expected one login call');
 if (source.includes('}\\nif (!Number.isInteger')) throw new Error('Escaped newline corruption');
-if (!source.includes("const deployGuildId=process.env.GUILD_ID?.trim();")) {
-  throw new Error('Guild ID handling is missing');
-}
 if (!source.includes("for(const guild of client.guilds.cache.values())")) {
   throw new Error('Multi-guild slash-command registration is missing');
 }
 if (!source.includes("await guild.commands.set(commandData)")) {
   throw new Error('Guild slash-command registration is missing');
+}
+if (!source.includes("await client.application.commands.set([])")) {
+  throw new Error('Stale global slash-command cleanup is missing');
 }
 
 for (const marker of [
