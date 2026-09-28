@@ -666,12 +666,12 @@ client.on('messageCreate',async m=>{
   const levels=levelFor(m.guild);
   if(levels.enabled){const k=m.guild.id+':'+m.author.id,d=db.levels[k]??{xp:0,level:0,last:0};if(now-d.last>=levels.cooldownMs){const oldLevel=d.level;d.xp+=levels.xpPerMessage;d.last=now;while(d.xp>=(d.level+1)*(levels.xpPerLevel||100))d.level++;db.levels[k]=d;save();if(d.level>oldLevel){const rewards=guildData(m.guild.id).levelRewards||{};const roleId=rewards[String(d.level)]||levels.rewards?.[String(d.level)];if(roleId)await m.member.roles.add(roleId).catch(()=>{});}}}
   function tokenizePrefixArgs(input){
-  const out=[]; const re=/"([^"]*)"|'([^']*)'|(\\S+)/g; let match;
+  const out=[]; const re=/"([^"]*)"|'([^']*)'|(\S+)/g; let match;
   while((match=re.exec(input))!==null)out.push(match[1]??match[2]??match[3]);
   return out;
 }
 function resolvePrefixCommand(input){
-  const tokens=input.trim().split(/\\s+/).filter(Boolean);
+  const tokens=tokenizePrefixArgs(input);
   if(!tokens.length)return null;
   for(let n=Math.min(tokens.length,4);n>0;n--){
     const candidate=tokens.slice(0,n).join(' ').toLowerCase();
