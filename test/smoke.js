@@ -14,8 +14,11 @@ const source = fs.readFileSync('src/index.js', 'utf8');
 
 if ((source.match(/client\.login/g) || []).length !== 1) throw new Error('Expected one login call');
 if (source.includes('}\\nif (!Number.isInteger')) throw new Error('Escaped newline corruption');
-if (!source.includes("process.env.GUILD_ID?.trim() || client.guilds.cache.first()?.id")) {
-  throw new Error('Automatic guild detection is missing');
+if (!source.includes("const deployGuildId=process.env.GUILD_ID?.trim();")) {
+  throw new Error('Guild ID handling is missing');
+}
+if (!source.includes("for(const guild of client.guilds.cache.values())")) {
+  throw new Error('Multi-guild slash-command registration is missing');
 }
 if (!source.includes("await guild.commands.set(commandData)")) {
   throw new Error('Guild slash-command registration is missing');
