@@ -556,18 +556,26 @@ client.once('ready',async()=>{
   console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
   const commandData=commands.map(c=>c.data.toJSON());
   try {
-    const deployGuildId=process.env.GUILD_ID?.trim() || client.guilds.cache.first()?.id;
+    const deployGuildId=process.env.GUILD_ID?.trim();
     if(deployGuildId){
       const guild=client.guilds.cache.get(deployGuildId) || await client.guilds.fetch(deployGuildId).catch(()=>null);
       if(!guild) throw new Error('GUILD_ID is not a guild the bot can access.');
       await guild.commands.set(commandData);
       console.log('[Project One] Registered '+commandData.length+' slash commands in guild '+guild.id+'.');
+    } else if(client.guilds.cache.size){
+      let registered=0;
+      for(const guild of client.guilds.cache.values()){
+        await guild.commands.set(commandData);
+        registered++;
+        console.log('[Project One] Registered '+commandData.length+' slash commands in guild '+guild.id+'.');
+      }
+      console.log('[Project One] Slash commands registered in '+registered+' guild(s).');
     } else {
       await client.application.commands.set(commandData);
       console.log('[Project One] Registered '+commandData.length+' global slash commands. Global command updates can take time to appear in Discord.');
     }
   } catch(e) {
-    console.error('[Commands] Slash command registration failed:',e?.message||e);
+    console.error('[Commands] Slash command registration failed:',e?.stack||e);
   }
 });
 
