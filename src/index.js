@@ -14,7 +14,7 @@ const BACKUP_FILE = path.resolve(config.database.backupFile);
 fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
 
 const defaults = () => ({
-  schemaVersion: 2, guilds: {}, warnings: {}, tickets: {}, reminders: [], giveaways: {}, finishedGiveaways: {},
+  schemaVersion: 2, guilds: {}, warnings: {}, tickets: {}, suggestions: {}, reminders: [], giveaways: {}, finishedGiveaways: {},
   levels: {}, economy: {}, afk: {}, autoreplies: {}
 });
 let db;
@@ -31,10 +31,10 @@ let dirty = false;
 function flushSave() {
   if (!dirty) return;
   try {
-    if (fs.existsSync(DB_FILE)) fs.copyFileSync(DB_FILE, BACKUP_FILE);
     const tmp = DB_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(db));
     fs.renameSync(tmp, DB_FILE);
+    fs.copyFileSync(DB_FILE, BACKUP_FILE);
     dirty = false;
   } catch (e) { console.error('[DB]', e.message); }
 }
