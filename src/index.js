@@ -543,7 +543,7 @@ client.once('ready',async()=>{
   console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
   const commandData=commands.map(c=>c.data.toJSON());
   try {
-    const deployGuildId=process.env.GUILD_ID?.trim();
+    const deployGuildId=process.env.GUILD_ID?.trim() || client.guilds.cache.first()?.id;
     if(deployGuildId){
       const guild=client.guilds.cache.get(deployGuildId) || await client.guilds.fetch(deployGuildId).catch(()=>null);
       if(!guild) throw new Error('GUILD_ID is not a guild the bot can access.');
