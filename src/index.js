@@ -719,15 +719,7 @@ async function buildPrefixOptions(command,args,guild){
   }
   return values;
 }
-client.on('messageCreate',async m=>{
-  if(m.author.bot)return;
-  const gd=guildData(m.guild?.id); if(m.guild)for(const [id,t] of Object.entries(db.tickets)){if(t.channelId===m.channel.id)t.lastActivity=Date.now();}
-  if(m.guild)await handleAfk(m);
-  if(m.guild)await handleAutoreply(m);
-  if(m.guild)await handleProtection(m);
-  if(m.guild)await handleAutomod(m);
-  if(m.guild)await handleLeveling(m);
-  if(!m.guild||!m.content.startsWith(config.bot.prefix))return;
+client.on('messageCreate',async m=>{  if(!m.guild||!m.content.startsWith(config.bot.prefix))return;
   const resolved=resolvePrefixCommand(m.content.slice(config.bot.prefix.length));
   if(!resolved)return;
   const {raw,name,command:c,args}=resolved;
