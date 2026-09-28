@@ -551,6 +551,18 @@ async function antiNuke(guild,type,targetId,label){
   await sendLog(guild,'protection','Anti-Nuke triggered against '+actor.tag+' for '+label,config.colors.danger);
 }
 
+function runtimeSelfCheck(){
+  const names=commands.map(c=>c.data.name);
+  const duplicate=names.filter((n,i)=>names.indexOf(n)!==i);
+  const invalid=commands.filter(c=>!c?.data||typeof c.run!=='function');
+  const generated=['ban','kick','lock','unlock'];
+  const all=[...new Set([...names,...generated])];
+  if(duplicate.length||invalid.length||all.length!==66){
+    throw new Error('[SelfCheck] Command integrity failed: total='+all.length+', duplicates='+duplicate.join(',')+', invalid='+invalid.length);
+  }
+  console.log('[Project One] Runtime self-check passed: '+all.length+' slash commands, '+commands.length+' registered handlers.');
+}
+
 client.once('ready',async()=>{
   client.user.setActivity(String(config.bot.activity).slice(0,128));
   console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
