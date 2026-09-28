@@ -24,7 +24,7 @@ Production-oriented Discord bot built with Discord.js 14 and Node.js 20+.
 1. Install Node.js 20 or newer.
 2. Run `npm install`.
 3. Copy `.env.example` to `.env`.
-4. Set `DISCORD_TOKEN` and `OWNER_IDS`. If `GUILD_ID` is set, slash commands are registered there; otherwise they are registered in every guild the bot can access.
+4. Set `DISCORD_TOKEN` and `OWNER_IDS`. On startup, the bot registers the full slash-command set directly in every guild it can access and clears stale global commands.
 5. Start with `npm start`.
 
 ## Configuration
