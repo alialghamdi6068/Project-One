@@ -541,7 +541,21 @@ async function antiNuke(guild,type,targetId,label){
 client.once('ready',async()=>{
   client.user.setActivity(String(config.bot.activity).slice(0,128));
   console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
-  if(process.env.CLIENT_ID){try{const rest=new REST({version:'10'}).setToken(process.env.DISCORD_TOKEN);await rest.put(Routes.applicationCommands(process.env.CLIENT_ID),{body:commands.map(c=>c.data.toJSON())});console.log('[Project One] Registered '+commands.length+' slash commands.')}catch(e){console.error('[Commands]',e.message)}}
+  const commandData=commands.map(c=>c.data.toJSON());
+  try {
+    const deployGuildId=process.env.GUILD_ID?.trim();
+    if(deployGuildId){
+      const guild=client.guilds.cache.get(deployGuildId) || await client.guilds.fetch(deployGuildId).catch(()=>null);
+      if(!guild) throw new Error('GUILD_ID is not a guild the bot can access.');
+      await guild.commands.set(commandData);
+      console.log('[Project One] Registered '+commandData.length+' slash commands in guild '+guild.id+'.');
+    } else {
+      await client.application.commands.set(commandData);
+      console.log('[Project One] Registered '+commandData.length+' global slash commands. Global command updates can take time to appear in Discord.');
+    }
+  } catch(e) {
+    console.error('[Commands] Slash command registration failed:',e?.message||e);
+  }
 });
 
 client.on('guildMemberAdd',async m=>{
