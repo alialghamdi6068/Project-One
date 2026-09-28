@@ -3,7 +3,7 @@ require('dotenv').config();
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  Client, GatewayIntentBits, Partials, REST, Routes,
+  Client, GatewayIntentBits, Partials,
   SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, AttachmentBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle
 } = require('discord.js');
@@ -27,16 +27,29 @@ if (!Number.isInteger(db.schemaVersion) || db.schemaVersion < 2) db.schemaVersio
 for (const k of Object.keys(defaults())) if (!db[k]) db[k] = defaults()[k];
 
 let saveTimer = null;
+let dirty = false;
+function flushSave() {
+  if (!dirty) return;
+  try {
+    if (fs.existsSync(DB_FILE)) fs.copyFileSync(DB_FILE, BACKUP_FILE);
+    const tmp = DB_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(db));
+    fs.renameSync(tmp, DB_FILE);
+    dirty = false;
+  } catch (e) { console.error('[DB]', e.message); }
+}
 function save() {
+  dirty = true;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try {
-      if (fs.existsSync(DB_FILE)) fs.copyFileSync(DB_FILE, BACKUP_FILE);
-      const tmp = DB_FILE + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-      fs.renameSync(tmp, DB_FILE);
-    } catch (e) { console.error('[DB]', e.message); }
-  }, 100);
+    saveTimer = null;
+    flushSave();
+  }, 500);
+}
+function saveNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  flushSave();
 }
 function guildData(id) {
   db.guilds[id] ??= {
@@ -646,7 +659,7 @@ client.on('messageCreate',async m=>{
   if(levels.enabled){const k=m.guild.id+':'+m.author.id,d=db.levels[k]??{xp:0,level:0,last:0};if(now-d.last>=levels.cooldownMs){const oldLevel=d.level;d.xp+=levels.xpPerMessage;d.last=now;while(d.xp>=(d.level+1)*(levels.xpPerLevel||100))d.level++;db.levels[k]=d;save();if(d.level>oldLevel){const rewards=guildData(m.guild.id).levelRewards||{};const roleId=rewards[String(d.level)]||levels.rewards?.[String(d.level)];if(roleId)await m.member.roles.add(roleId).catch(()=>{});}}}
   if(!m.content.startsWith(config.bot.prefix))return;
   const parts=m.content.slice(config.bot.prefix.length).trim().split(/\s+/),raw=(parts.shift()||'').toLowerCase(),name=aliases[raw]||raw,c=commands.find(x=>x.data.name===name);if(!c)return;
-  const required={settings:'Administrator','log-channel':'ManageGuild','suggest-channel':'ManageGuild',goodbye:'ManageGuild','autorole-remove':'ManageRoles','bot-info':null,reminders:null,'giveaway-end':'ManageGuild','giveaway-reroll':'ManageGuild','giveaway-cancel':'ManageGuild','automod':'ManageGuild','autoreply-remove':'ManageGuild','autoreply-list':'ManageGuild','remind-cancel':null,'leaderboard':null,'economy-top':null,'protection-config':'Administrator','protection-restore':'Administrator','leaderboard':null,'economy-top':null,'protection-config':'Administrator','schedule':'ManageMessages','scheduled':'ManageMessages','schedule-cancel':'ManageMessages','level-reward':'ManageRoles','level-reward-remove':'ManageRoles','economy-admin':'ManageGuild','automod-rule':'ManageGuild','protection-whitelist':'Administrator',ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
+  const required={settings:'Administrator','log-channel':'ManageGuild','suggest-channel':'ManageGuild',goodbye:'ManageGuild','autorole-remove':'ManageRoles','bot-info':null,reminders:null,'giveaway-end':'ManageGuild','giveaway-reroll':'ManageGuild','giveaway-cancel':'ManageGuild','automod':'ManageGuild','autoreply-remove':'ManageGuild','autoreply-list':'ManageGuild','remind-cancel':null,'leaderboard':null,'economy-top':null,'protection-config':'Administrator','protection-restore':'Administrator','schedule':'ManageMessages','scheduled':'ManageMessages','schedule-cancel':'ManageMessages','level-reward':'ManageRoles','level-reward-remove':'ManageRoles','economy-admin':'ManageGuild','automod-rule':'ManageGuild','protection-whitelist':'Administrator',ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
   const custom=config.commands.customPermissions?.[name]; if(custom&&!m.member.permissions.has(custom)&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.'); if(required[name]&&!m.member.permissions.has(PermissionFlagsBits[required[name]])&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.');
   const target=parts[0]?await fetchMember(m.guild,parts[0]):null;
   const fake={guild:m.guild,channel:m.channel,user:m.author,member:m.member,client,options:{
@@ -767,7 +780,7 @@ setInterval(async()=>{
 },15000);
 
 async function shutdown(signal){
-  try { save(); if(saveTimer) await new Promise(r=>setTimeout(r,150)); } finally { client.destroy(); process.exit(0); }
+  try { saveNow(); } finally { client.destroy(); process.exit(0); }
 }
 process.once('SIGINT',()=>shutdown('SIGINT'));
 process.once('SIGTERM',()=>shutdown('SIGTERM'));
