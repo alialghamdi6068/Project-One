@@ -564,6 +564,7 @@ function runtimeSelfCheck(){
 }
 
 client.once('ready',async()=>{
+  runtimeSelfCheck();
   client.user.setActivity(String(config.bot.activity).slice(0,128));
   console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
   const commandData=commands.map(c=>c.data.toJSON());
