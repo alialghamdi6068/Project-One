@@ -521,8 +521,8 @@ add(new SlashCommandBuilder().setName('giveaway-end').setDescription('End a give
 const aliases={
   'مساعدة':'help','اوامر':'help','بنج':'ping','معلومات':'server','باند':'ban','حظر':'ban','كيك':'kick','طرد':'kick',
   'تحذير':'warn','تحذيرات':'warnings','مسح':'clear','قفل':'lock','فتح':'unlock','سلو':'slowmode','تكت':'ticket-panel',
-  'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','اعدادات':'settings','معلومات-البوت':'bot-info','قائمة-التذكيرات':'reminders','الغاء-التذكير':'remind-cancel','انهاء-السحب':'giveaway-end','اعادة-السحب':'giveaway-reroll','الغاء-السحب':'giveaway-cancel','لوق':'log-channel','اقتراحات':'suggest-channel','وداع':'goodbye','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk','اي اف كي':'afk',
-  'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role','توب':'leaderboard','توب-فلوس':'economy-top','اوتومود':'automod','حذف-رد':'autoreply-remove','ردود':'autoreply-list','حماية-اعدادات':'protection-config','جدولة':'schedule','المجدول':'scheduled','الغاء-جدولة':'schedule-cancel','مكافاة-لفل':'level-reward','حذف-مكافاة-لفل':'level-reward-remove','اقتصاد-ادمن':'economy-admin','قاعدة-اوتومود':'automod-rule'
+  'اقتراح':'suggest','تكت-اضافة':'ticket-add','تكت-حذف':'ticket-remove','تكت-نقل':'ticket-transfer','تكت-احصائيات':'ticket-stats','اعدادات':'settings','معلومات-البوت':'bot-info','قائمة-التذكيرات':'reminders','الغاء-التذكير':'remind-cancel','انهاء-السحب':'giveaway-end','اعادة-السحب':'giveaway-reroll','الغاء-السحب':'giveaway-cancel','لوق':'log-channel','اقتراحات':'suggest-channel','وداع':'goodbye','سحب':'giveaway','لفل':'level','رصيد':'balance','يومي':'daily','اي اف كي':'afk',
+  'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role','توب':'leaderboard','توب-فلوس':'economy-top','اوتومود':'automod','حذف-رد':'autoreply-remove','ردود':'autoreply-list','حماية-اعدادات':'protection-config','جدولة':'schedule','المجدول':'scheduled','الغاء-جدولة':'schedule-cancel','مكافاة-لفل':'level-reward','حذف-مكافاة-لفل':'level-reward-remove','اقتصاد-ادمن':'economy-admin','قاعدة-اوتومود':'automod-rule','استرجاع-حماية':'protection-restore'
 };
 
 const client=new Client({
@@ -665,16 +665,90 @@ client.on('messageCreate',async m=>{
   }
   const levels=levelFor(m.guild);
   if(levels.enabled){const k=m.guild.id+':'+m.author.id,d=db.levels[k]??{xp:0,level:0,last:0};if(now-d.last>=levels.cooldownMs){const oldLevel=d.level;d.xp+=levels.xpPerMessage;d.last=now;while(d.xp>=(d.level+1)*(levels.xpPerLevel||100))d.level++;db.levels[k]=d;save();if(d.level>oldLevel){const rewards=guildData(m.guild.id).levelRewards||{};const roleId=rewards[String(d.level)]||levels.rewards?.[String(d.level)];if(roleId)await m.member.roles.add(roleId).catch(()=>{});}}}
-  if(!m.content.startsWith(config.bot.prefix))return;
-  const parts=m.content.slice(config.bot.prefix.length).trim().split(/\s+/),raw=(parts.shift()||'').toLowerCase(),name=aliases[raw]||raw,c=commands.find(x=>x.data.name===name);if(!c)return;
+  function tokenizePrefixArgs(input){
+  const out=[]; const re=/"([^"]*)"|'([^']*)'|(\\S+)/g; let match;
+  while((match=re.exec(input))!==null)out.push(match[1]??match[2]??match[3]);
+  return out;
+}
+function resolvePrefixCommand(input){
+  const tokens=input.trim().split(/\\s+/).filter(Boolean);
+  if(!tokens.length)return null;
+  for(let n=Math.min(tokens.length,4);n>0;n--){
+    const candidate=tokens.slice(0,n).join(' ').toLowerCase();
+    const name=aliases[candidate]||candidate;
+    const command=commands.find(x=>x.data.name===name);
+    if(command)return {raw:candidate,name,command,args:tokens.slice(n)};
+  }
+  return null;
+}
+async function buildPrefixOptions(command,args,guild){
+  const json=command.data.toJSON();
+  const definitions=(json.options||[]).filter(o=>o.type!==1&&o.type!==2);
+  const values={}; let cursor=0;
+  for(let index=0;index<definitions.length;index++){
+    const option=definitions[index]; const remaining=definitions.length-index-1;
+    if(cursor>=args.length){
+      if(option.required)throw new Error('Missing required argument: '+option.name);
+      continue;
+    }
+    let raw;
+    if(option.type===3){
+      raw=remaining===0?args.slice(cursor).join(' '):args[cursor++];
+    }else{
+      raw=args[cursor++];
+    }
+    if(option.type===4){
+      const value=Number(raw); if(!Number.isInteger(value))throw new Error('Invalid integer for '+option.name);
+      values[option.name]=value;
+    }else if(option.type===5){
+      if(!['true','false'].includes(String(raw).toLowerCase()))throw new Error('Invalid boolean for '+option.name);
+      values[option.name]=String(raw).toLowerCase()==='true';
+    }else if(option.type===6){
+      const member=await fetchMember(guild,raw);
+      if(!member)throw new Error('User not found: '+raw);
+      values[option.name]=member.user;
+    }else if(option.type===7){
+      const id=String(raw).replace(/[<#>]/g,''); values[option.name]=guild.channels.cache.get(id)||null;
+      if(!values[option.name])throw new Error('Channel not found: '+raw);
+    }else if(option.type===8){
+      const id=String(raw).replace(/[<@&>]/g,''); values[option.name]=guild.roles.cache.get(id)||null;
+      if(!values[option.name])throw new Error('Role not found: '+raw);
+    }else{
+      values[option.name]=raw;
+    }
+  }
+  return values;
+}
+client.on('messageCreate',async m=>{
+  if(m.author.bot)return;
+  const gd=guildData(m.guild?.id); if(m.guild)for(const [id,t] of Object.entries(db.tickets)){if(t.channelId===m.channel.id)t.lastActivity=Date.now();}
+  if(m.guild)await handleAfk(m);
+  if(m.guild)await handleAutoreply(m);
+  if(m.guild)await handleProtection(m);
+  if(m.guild)await handleAutomod(m);
+  if(m.guild)await handleLeveling(m);
+  if(!m.guild||!m.content.startsWith(config.bot.prefix))return;
+  const resolved=resolvePrefixCommand(m.content.slice(config.bot.prefix.length));
+  if(!resolved)return;
+  const {raw,name,command:c,args}=resolved;
   const required={settings:'Administrator','log-channel':'ManageGuild','suggest-channel':'ManageGuild',goodbye:'ManageGuild','autorole-remove':'ManageRoles','bot-info':null,reminders:null,'giveaway-end':'ManageGuild','giveaway-reroll':'ManageGuild','giveaway-cancel':'ManageGuild','automod':'ManageGuild','autoreply-remove':'ManageGuild','autoreply-list':'ManageGuild','remind-cancel':null,'leaderboard':null,'economy-top':null,'protection-config':'Administrator','protection-restore':'Administrator','schedule':'ManageMessages','scheduled':'ManageMessages','schedule-cancel':'ManageMessages','level-reward':'ManageRoles','level-reward-remove':'ManageRoles','economy-admin':'ManageGuild','automod-rule':'ManageGuild','protection-whitelist':'Administrator',ban:'BanMembers',kick:'KickMembers',unban:'BanMembers',timeout:'ModerateMembers',untimeout:'ModerateMembers',warn:'ModerateMembers',warnings:'ModerateMembers',clear:'ManageMessages',lock:'ManageChannels',unlock:'ManageChannels',slowmode:'ManageChannels',role:'ManageRoles','ticket-panel':'ManageChannels',welcome:'ManageGuild',autorole:'ManageRoles',autoreply:'ManageGuild',announce:'ManageMessages',giveaway:'ManageGuild',lockdown:'Administrator',protection:'Administrator'};
-  const custom=config.commands.customPermissions?.[name]; if(custom&&!m.member.permissions.has(custom)&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.'); if(required[name]&&!m.member.permissions.has(PermissionFlagsBits[required[name]])&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.');
-  const target=parts[0]?await fetchMember(m.guild,parts[0]):null;
-  const fake={guild:m.guild,channel:m.channel,user:m.author,member:m.member,client,options:{
-    getUser:()=>target?.user||null,getString:(n)=>{if(name==='suggest')return parts.join(' ');if(name==='ban'||name==='kick'||name==='warn')return parts.slice(1).join(' ')||null;return parts.join(' ')||null;},
-    getInteger:(n)=>name==='timeout'?Number(parts[1])||0:Number(parts[0])||0,getBoolean:()=>parts[0]==='true',getRole:()=>null,getChannel:()=>m.channel
-  },reply:p=>m.reply(p),followUp:p=>m.reply(p)};
-  try{await c.run(fake);await sendLog(m.guild,'command',m.author.tag+' used !'+raw);}catch(e){console.error('[Prefix]',e);await m.reply('حدث خطأ أثناء تنفيذ الأمر.').catch(()=>{});}
+  const custom=config.commands.customPermissions?.[name];
+  if(custom&&!m.member.permissions.has(custom)&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.');
+  if(required[name]&&!m.member.permissions.has(PermissionFlagsBits[required[name]])&&!owner(m.author.id))return m.reply('ما عندك الصلاحية المطلوبة.');
+  try{
+    const values=await buildPrefixOptions(c,args,m.guild);
+    const fake={guild:m.guild,channel:m.channel,user:m.author,member:m.member,client,options:{
+      getUser:n=>values[n]?.user||null,
+      getMember:n=>values[n]||null,
+      getString:n=>values[n]??null,
+      getInteger:n=>values[n]??null,
+      getBoolean:n=>values[n]??null,
+      getRole:n=>values[n]??null,
+      getChannel:n=>values[n]??null,
+      getMentionable:n=>values[n]??null
+    },reply:p=>m.reply(p),followUp:p=>m.reply(p),deferReply:async()=>{},editReply:p=>m.reply(p)};
+    await c.run(fake);await sendLog(m.guild,m.author.tag+' used !'+raw);
+  }catch(e){console.error('[Prefix]',e);await m.reply('الاستخدام غير صحيح أو حدث خطأ: '+String(e.message||e).slice(0,180)).catch(()=>{});}
 });
 
 async function createTicket(i,type){ if(!ticketConfiguredType(type))return commandError(i,'نوع التذكرة غير مفعّل.');
