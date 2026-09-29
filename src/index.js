@@ -621,7 +621,15 @@ client.once('clientReady',async()=>{
   runtimeSelfCheck();
   client.user.setActivity(String(config.bot.activity).slice(0,128));
   console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
-  const commandData=commands.map(c=>c.data.toJSON());
+  const commandData=commands.map(c=>c.data.toJSON()).map(command=>{
+    // Discord requires required options to precede optional options.
+    // Normalize this at deployment time so one malformed builder cannot
+    // prevent the entire command set from being registered.
+    if(Array.isArray(command.options)){
+      command.options=[...command.options].sort((a,b)=>Number(Boolean(b.required))-Number(Boolean(a.required)));
+    }
+    return command;
+  });
   console.log('[Project One] Preparing '+commandData.length+' slash commands.');
   try {
     // One authoritative deployment path: guild commands are bulk-overwritten in-place.
@@ -864,12 +872,26 @@ async function sendTranscriptLog(guild,name,text){
 client.on('interactionCreate',async i=>{
   try{
     if(i.isChatInputCommand()){
-      const c=commands.find(x=>x.data.name===i.commandName);if(!c)return;
-      const wait=commandCooldown(i.user.id,i.commandName,config.commands.cooldownMs);if(wait)return commandError(i,'انتظر '+wait+' ثانية قبل تكرار الأمر.');
+      const c=commands.find(x=>x.data?.name===i.commandName);
+      console.log('[Interaction] /'+i.commandName+' from '+i.user.tag+' ('+i.guildId+'): '+(c?'handler found':'handler missing'));
+      if(!c){
+        return commandError(i,'هذا الأمر مسجل في Discord لكن معالجه غير موجود داخل البوت.');
+      }
+      const wait=commandCooldown(i.user.id,i.commandName,config.commands.cooldownMs);
+      if(wait)return commandError(i,'انتظر '+wait+' ثانية قبل تكرار الأمر.');
       const key=i.user.id+':'+i.commandName,active=mutationLocks.get('cmd:'+key);
       if(active)return commandError(i,'لديك عملية مماثلة قيد التنفيذ.');
       let release;mutationLocks.set('cmd:'+key,new Promise(r=>release=r));
-      try{await c.run(i);}finally{mutationLocks.delete('cmd:'+key);release();}
+      try{
+        await c.run(i);
+      }catch(e){
+        console.error('[CommandError] /'+i.commandName,e?.stack||e);
+        if(!i.replied&&!i.deferred) await commandError(i,'حدث خطأ أثناء تنفيذ /'+i.commandName+'.').catch(()=>{});
+        else await i.followUp({content:'حدث خطأ أثناء تنفيذ الأمر.',ephemeral:true}).catch(()=>{});
+      }finally{
+        mutationLocks.delete('cmd:'+key);
+        release();
+      }
       return;
     }
     if(i.isStringSelectMenu()&&i.customId==='help:category'){const map={moderation:'ban, kick, timeout, warn, warnings, clear, lock, unlock, slowmode, role',protection:'protection, lockdown, protection-whitelist',tickets:'ticket-panel, ticket-add, ticket-remove, ticket-transfer, ticket-stats',community:'suggest, giveaway, giveaway-end, level, balance, daily, afk',utility:'ping, server, user, member, bot-info, settings'};return i.update({embeds:[embed('Command Center — '+i.values[0],map[i.values[0]])],components:i.message.components});} if(!i.isButton())return;
