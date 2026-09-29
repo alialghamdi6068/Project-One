@@ -525,10 +525,30 @@ const aliases={
   'قفل عام':'lockdown','حماية':'protection','اعلان':'announce','تذكير':'remind','رتبة':'role','توب':'leaderboard','توب-فلوس':'economy-top','اوتومود':'automod','حذف-رد':'autoreply-remove','ردود':'autoreply-list','حماية-اعدادات':'protection-config','جدولة':'schedule','المجدول':'scheduled','الغاء-جدولة':'schedule-cancel','مكافاة-لفل':'level-reward','حذف-مكافاة-لفل':'level-reward-remove','اقتصاد-ادمن':'economy-admin','قاعدة-اوتومود':'automod-rule','استرجاع-حماية':'protection-restore'
 };
 
+const REQUIRED_INTENTS = [
+  ['Guilds', GatewayIntentBits.Guilds, false, 'Slash commands, guild/channel/role access'],
+  ['GuildMembers', GatewayIntentBits.GuildMembers, true, 'Welcome, goodbye, autorole, moderation, tickets, member protection'],
+  ['GuildMessages', GatewayIntentBits.GuildMessages, false, 'Prefix commands, AutoMod, AFK, autoreplies, message logging'],
+  ['MessageContent', GatewayIntentBits.MessageContent, true, 'Prefix commands and message-content protection/AutoMod'],
+  ['GuildModeration', GatewayIntentBits.GuildModeration, false, 'Audit-log protection and moderation events'],
+  ['GuildVoiceStates', GatewayIntentBits.GuildVoiceStates, false, 'Voice-state logging']
+];
+
 const client=new Client({
-  intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildModeration,GatewayIntentBits.GuildPresences],
+  intents: REQUIRED_INTENTS.map(([,intent])=>intent),
   partials:[Partials.Channel,Partials.Message,Partials.GuildMember]
 });
+
+function verifyGatewayIntents() {
+  const enabled = client.options.intents.bitfield;
+  const missing = REQUIRED_INTENTS.filter(([,intent]) => !enabled.has(intent));
+  if (missing.length) {
+    throw new Error('[Discord] Missing Gateway Intents: '+missing.map(([name])=>name).join(', '));
+  }
+  const privileged = REQUIRED_INTENTS.filter(([,intent,privileged]) => privileged && enabled.has(intent)).map(([name])=>name);
+  console.log('[Discord] Gateway Intents OK: '+REQUIRED_INTENTS.map(([name])=>name).join(', '));
+  console.log('[Discord] Privileged intents required in Developer Portal: '+privileged.join(', '));
+}
 
 const spam=new Map(), joins=new Map(), auditActors=new Map(), ticketBusy=new Set();
 
@@ -564,6 +584,7 @@ function runtimeSelfCheck(){
 }
 
 client.once('ready',async()=>{
+  verifyGatewayIntents();
   runtimeSelfCheck();
   client.user.setActivity(String(config.bot.activity).slice(0,128));
   console.log('[Project One] Ready as '+client.user.tag+' | '+client.guilds.cache.size+' guild(s)');
