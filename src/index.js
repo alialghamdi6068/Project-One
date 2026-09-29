@@ -222,7 +222,7 @@ add(new SlashCommandBuilder().setName('log-channel').setDescription('Set the aud
 add(new SlashCommandBuilder().setName('suggest-channel').setDescription('Set the suggestions channel').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addChannelOption(o=>o.setName('channel').setDescription('Suggestions channel').addChannelTypes(ChannelType.GuildText).setRequired(true)), async i=>{
   guildData(i.guild.id).settings.suggestionChannelId=i.options.getChannel('channel').id;save();await i.reply('تم تعيين قناة الاقتراحات.');
 });
-add(new SlashCommandBuilder().setName('goodbye').setDescription('Configure goodbye messages').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addChannelOption(o=>o.setName('channel').setDescription('Channel').addChannelTypes(ChannelType.GuildText)).addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)).addStringOption(o=>o.setName('message').setDescription('Message')), async i=>{
+add(new SlashCommandBuilder().setName('goodbye').setDescription('Configure goodbye messages').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)).addChannelOption(o=>o.setName('channel').setDescription('Channel').addChannelTypes(ChannelType.GuildText)).addStringOption(o=>o.setName('message').setDescription('Message')), async i=>{
   const s=guildData(i.guild.id).settings;s.goodbyeEnabled=i.options.getBoolean('enabled');s.goodbyeChannelId=i.options.getChannel('channel')?.id||s.goodbyeChannelId;s.goodbyeMessage=i.options.getString('message')||config.goodbye.message;save();await i.reply('تم حفظ إعدادات المغادرة.');
 });
 add(new SlashCommandBuilder().setName('autorole-remove').setDescription('Disable autorole').setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles), async i=>{
@@ -484,11 +484,11 @@ add(new SlashCommandBuilder().setName('ticket-panel').setDescription('Send the t
 });
 
 add(new SlashCommandBuilder().setName('welcome').setDescription('Configure welcome channel').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-  .addChannelOption(o=>o.setName('channel').setDescription('Channel').addChannelTypes(ChannelType.GuildText)).addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)).addStringOption(o=>o.setName('message').setDescription('Message')), async i=>{
+  .addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)).addChannelOption(o=>o.setName('channel').setDescription('Channel').addChannelTypes(ChannelType.GuildText)).addStringOption(o=>o.setName('message').setDescription('Message')), async i=>{
     const s=guildData(i.guild.id).settings;s.welcomeEnabled=i.options.getBoolean('enabled');s.welcomeChannelId=i.options.getChannel('channel')?.id||s.welcomeChannelId;s.welcomeMessage=i.options.getString('message')||config.welcome.message;save();await i.reply('تم حفظ إعدادات الترحيب.');
 });
 add(new SlashCommandBuilder().setName('autorole').setDescription('Configure autorole').setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
-  .addRoleOption(o=>o.setName('role').setDescription('Role')).addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)), async i=>{
+  .addBooleanOption(o=>o.setName('enabled').setDescription('Enabled').setRequired(true)).addRoleOption(o=>o.setName('role').setDescription('Role')), async i=>{
     const s=guildData(i.guild.id).settings;s.autoroleEnabled=i.options.getBoolean('enabled');s.autoroleRoleId=i.options.getRole('role')?.id||s.autoroleRoleId;save();await i.reply('تم حفظ إعدادات الرتبة التلقائية.');
 });
 add(new SlashCommandBuilder().setName('autoreply').setDescription('Add an automatic reply').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
