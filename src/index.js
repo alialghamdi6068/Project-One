@@ -659,17 +659,20 @@ client.once('ready',async()=>{
       }
     }
 
-    // Remove old global commands so stale command sets cannot remain visible.
+    // Keep a global command set as a fallback. Guild commands are preferred because
+    // they propagate immediately; global commands protect against a guild-registration
+    // failure and also make the full command set available after Discord propagation.
     try {
-      await client.application.commands.set([]);
-      console.log('[Project One] Cleared stale global slash commands.');
+      const globalDeployed=await client.application.commands.set(commandData);
+      const globalNames=new Set(globalDeployed.map(c=>c.name));
+      const globalMissing=[...expectedNames].filter(name=>!globalNames.has(name));
+      if(globalMissing.length) {
+        console.error('[Commands] Global command set is incomplete: '+globalMissing.join(', '));
+      } else {
+        console.log('[Project One] Global slash command set verified: '+globalDeployed.size+'/'+commandData.length+'.');
+      }
     } catch(e) {
-      console.warn('[Commands] Could not clear global commands:',e?.message||e);
-    }
-
-    if(!registered && !client.guilds.cache.size){
-      const deployed=await client.application.commands.set(commandData);
-      console.log('[Project One] No guild cache available; registered and verified '+deployed.size+'/'+commandData.length+' global slash commands.');
+      console.error('[Commands] Global slash registration failed: '+(e?.message||e));
     }
 
     console.log('[Project One] Slash command deployment finished: '+registered+'/'+client.guilds.cache.size+' guild(s), '+registeredCommands+' verified command registrations.');
