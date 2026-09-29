@@ -616,7 +616,7 @@ function runtimeSelfCheck(){
   console.log('[Project One] Runtime self-check passed: '+all.length+' slash commands, '+commands.length+' registered handlers.');
 }
 
-client.once('ready',async()=>{
+client.once('clientReady',async()=>{
   verifyGatewayIntents();
   runtimeSelfCheck();
   client.user.setActivity(String(config.bot.activity).slice(0,128));
