@@ -77,6 +77,18 @@ if (!source.includes("protection.antiBot.enabled")) {
 if (!source.includes("const protection=protectionFor(m.guild)")) {
   throw new Error('Per-guild protection configuration is missing from member join handling');
 }
+if (!source.includes("data.setDefaultMemberPermissions(null)")) {
+  throw new Error('Slash command visibility guard is missing');
+}
+if (!source.includes("const requiredPermissions = json.default_member_permissions")) {
+  throw new Error('Command permission metadata is not captured');
+}
+if (!source.includes("config.permissions.ownerBypass && owner(i.user.id)")) {
+  throw new Error('Owner permission bypass is missing');
+}
+if (!source.includes("Bulk slash registration failed")) {
+  throw new Error('Individual slash registration fallback is missing');
+}
 if (!source.includes("labels[type] ||")) {
   throw new Error('Custom ticket type labels are not supported');
 }
