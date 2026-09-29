@@ -657,8 +657,6 @@ client.once('ready',async()=>{
     console.log('[Project One] Slash deployment finished: '+registered+'/'+client.guilds.cache.size+' guild(s), '+registeredCommands+' verified command registrations.');
   } catch(e) {
     console.error('[Commands] Slash command deployment failed:',e?.stack||e);
-  }  } catch(e) {
-    console.error('[Commands] Slash command deployment failed:',e?.stack||e);
   }
 });
 
@@ -898,82 +896,3 @@ client.on('interactionCreate',async i=>{
       const [,action,id]=i.customId.split(':');db.suggestions??={};const d=db.suggestions[id];
       if(!d)return commandError(i,'الاقتراح غير موجود.');
       if(action==='vote-up'||action==='vote-down'){
-        if(action==='vote-down'&&config.suggestions.allowDownvote===false)return commandError(i,'التصويت السلبي معطل.');
-        if(d.status!=='pending')return commandError(i,'الاقتراح مغلق.');
-        d.voters??={}; if(d.voters[i.user.id])return commandError(i,'سبق لك التصويت.');
-        d.voters[i.user.id]=action==='vote-up'?'up':'down';d.votes??={up:[],down:[]};
-        d.votes[action==='vote-up'?'up':'down'].push(i.user.id);save();
-        const row=new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('suggest:vote-up:'+id).setLabel('👍 '+d.votes.up.length).setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId('suggest:vote-down:'+id).setLabel('👎 '+d.votes.down.length).setStyle(ButtonStyle.Secondary).setDisabled(config.suggestions.allowDownvote===false),
-          ...(config.suggestions.approvalButtons?[new ButtonBuilder().setCustomId('suggest:approve:'+id).setLabel('Approve').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId('suggest:reject:'+id).setLabel('Reject').setStyle(ButtonStyle.Danger)]:[])
-        );
-        await i.message.edit({components:[row]}).catch(()=>{});
-        return i.reply({content:'تم تسجيل تصويتك.',ephemeral:true});
-      }
-      if(action==='approve'||action==='reject'){
-        const staff=hasGuildPermission(i.member,PermissionFlagsBits.ManageGuild)||(config.suggestions.staffRoleId&&i.member.roles.cache.has(config.suggestions.staffRoleId));
-        if(!staff)return commandError(i,'هذا الإجراء متاح للإدارة فقط.');
-        if(d.status!=='pending')return commandError(i,'الاقتراح مغلق.');
-        d.status=action==='approve'?'approved':'rejected';d.reviewedBy=i.user.id;d.reviewedAt=Date.now();save();
-        const row=new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('suggest:vote-up:'+id).setLabel('👍 '+(d.votes?.up?.length||0)).setStyle(ButtonStyle.Primary).setDisabled(true),
-          new ButtonBuilder().setCustomId('suggest:vote-down:'+id).setLabel('👎 '+(d.votes?.down?.length||0)).setStyle(ButtonStyle.Secondary).setDisabled(true)
-        );
-        await i.message.edit({components:[row]}).catch(()=>{});
-        return i.reply({content:'تم تحديث حالة الاقتراح.',ephemeral:true});
-      }
-    }
-  }catch(e){console.error('[Interaction]',e);await commandError(i,'حدث خطأ أثناء تنفيذ العملية.').catch(()=>{});}
-});
-
-setInterval(()=>Promise.all(client.guilds.cache.map(g=>takeSnapshot(g))),Math.max(15000,config.protection.restore.snapshotIntervalMs||60000));
-
-setInterval(async()=>{
-  const now=Date.now();
-  for(const [id,d] of Object.entries(db.tickets||{})){
-    if(d.status!=='open'||!config.tickets.inactivityMs||now-(d.lastActivity||d.created)>config.tickets.inactivityMs)continue;
-    const ch=client.channels.cache.get(d.channelId);
-    if(!ch?.isTextBased())continue;
-    d.status='closed';d.closedAt=now;await ch.setTopic(ticketTopic(d)).catch(()=>{});
-    const ownerMember=await fetchMember(ch.guild,d.ownerId);if(ownerMember)await ch.permissionOverwrites.edit(ownerMember,{ViewChannel:false,SendMessages:false}).catch(()=>{});
-    await ch.send({embeds:[embed('Ticket Auto-Closed','تم إغلاق التذكرة تلقائيًا بسبب عدم النشاط.',config.colors.warning)]}).catch(()=>{});
-    save();
-  }
-  for(const [gid,times] of joins){const p=protectionFor(client.guilds.cache.get(gid)||{id:gid});if(!times.length)continue;if(Date.now()-times[times.length-1]>(p.raid.windowMs||10000)){const gd=db.guilds[gid];if(gd?.settings?.raidMode){gd.settings.raidMode=false;save();}}}
-
-  for(const gd of Object.values(db.guilds)){for(const s of [...(gd.scheduled||[])])if(s.at<=now&&!s.running){s.running=true;const c=client.channels.cache.get(s.channelId);if(c?.isTextBased())await c.send(s.message).catch(()=>{});gd.scheduled=gd.scheduled.filter(x=>x.id!==s.id);save();}}
-  for(const r of [...db.reminders])if(r.at<=now){const g=client.guilds.cache.get(r.guildId),c=g?.channels.cache.get(r.channelId);if(c?.isTextBased())await c.send('<@'+r.userId+'> تذكير: '+r.text).catch(()=>{});db.reminders=db.reminders.filter(x=>x.id!==r.id);save();}
-  for(const [id,g] of Object.entries(db.giveaways)){if(g.ends<=now){const c=client.channels.cache.get(g.channelId),entries=[...new Set(g.entries)];const winners=[];for(let n=0;n<Math.min(g.winners,entries.length);n++){const idx=Math.floor(Math.random()*entries.length);winners.push(entries.splice(idx,1)[0]);}if(c?.isTextBased())await c.send({embeds:[embed('Giveaway Ended','**Prize:** '+g.prize+'\n**Winners:** '+(winners.length?winners.map(x=>'<@'+x+'>').join(', '):'No valid entries'),config.colors.success)]}).catch(()=>{});db.finishedGiveaways??={};db.finishedGiveaways[id]={...g,winners,finishedAt:Date.now(),status:'finished'}; if(c?.isTextBased()){const original=await c.messages.fetch(id).catch(()=>null);if(original)await original.edit({components:[],embeds:[embed('Giveaway Ended','**Prize:** '+g.prize+'\n**Winners:** '+(winners.length?winners.map(x=>'<@'+x+'>').join(', '):'No valid entries'),config.colors.success)]}).catch(()=>{});} delete db.giveaways[id];save();}}
-},15000);
-
-async function shutdown(signal){
-  try { saveNow(); } finally { client.destroy(); process.exit(0); }
-}
-process.once('SIGINT',()=>shutdown('SIGINT'));
-process.once('SIGTERM',()=>shutdown('SIGTERM'));
-
-process.on('unhandledRejection',e=>console.error('[Unhandled]',e));
-process.on('uncaughtException',e=>console.error('[Uncaught]',e));
-if(!process.env.DISCORD_TOKEN){console.error('Missing DISCORD_TOKEN');process.exit(1);}
-
-function dbValidate(){
-  db.guilds??={};db.warnings??={};db.tickets??={};db.suggestions??={};db.giveaways??={};db.finishedGiveaways??={};
-  db.reminders??=[];db.economy??={};db.levels??={};db.schemaVersion??=2;
-  for(const [id,d] of Object.entries(db.tickets)) if(!d.guildId||!d.ownerId||!['open','closed'].includes(d.status)) delete db.tickets[id];
-  for(const d of Object.values(db.tickets)) { d.lastActivity??=d.created||Date.now(); d.claimedBy??=null; }
-  for(const d of Object.values(db.giveaways)) d.entries??=[];
-  for(const d of Object.values(db.finishedGiveaways)) d.entries??=[];
-  for(const d of Object.values(db.suggestions)) { d.votes??={up:[],down:[]}; d.voters??={}; }
-}
-dbValidate();
-
-async function safeSave(){ try{ save(); return true; }catch(e){ console.error('Database save failed:',e); return false; } }
-
-function ticketConfiguredType(type){
-  return Array.isArray(config.tickets.types)&&config.tickets.types.includes(type);
-}
-
-
-
-client.login(process.env.DISCORD_TOKEN).catch(error=>{console.error('[Discord] Login failed:',error?.stack||error);process.exitCode=1;});
