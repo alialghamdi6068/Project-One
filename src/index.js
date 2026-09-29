@@ -619,12 +619,18 @@ client.once('ready',async()=>{
     // above so every command is visible; permission checks are enforced in guardedRun.
     let registered=0;
     let registeredCommands=0;
+    const expectedNames=new Set(commandData.map(c=>c.name));
     for(const guild of client.guilds.cache.values()){
       try {
-        await guild.commands.set(commandData);
+        const deployed=await guild.commands.set(commandData);
+        const deployedNames=new Set(deployed.map(c=>c.name));
+        const missing=[...expectedNames].filter(name=>!deployedNames.has(name));
+        if(missing.length){
+          throw new Error('Discord returned an incomplete command set: missing '+missing.join(', '));
+        }
         registered++;
-        registeredCommands += commandData.length;
-        console.log('[Project One] Registered '+commandData.length+' slash commands in guild '+guild.id+' ('+guild.name+').');
+        registeredCommands += deployed.size;
+        console.log('[Project One] Registered and verified '+deployed.size+'/'+commandData.length+' slash commands in guild '+guild.id+' ('+guild.name+').');
       } catch(e) {
         console.error('[Commands] Bulk slash registration failed in guild '+guild.id+' ('+guild.name+'): '+(e?.message||e));
         let individual=0;
@@ -636,12 +642,19 @@ client.once('ready',async()=>{
             console.error('[Commands] Failed to register /'+data.name+' in guild '+guild.id+': '+(commandError?.message||commandError));
           }
         }
-        if(individual===commandData.length){
-          registered++;
-          registeredCommands += individual;
-          console.log('[Project One] Individual slash registration recovered '+individual+' commands in guild '+guild.id+'.');
-        } else {
-          console.error('[Commands] Individual fallback registered '+individual+'/'+commandData.length+' commands in guild '+guild.id+'.');
+        try {
+          const deployed=await guild.commands.fetch();
+          const deployedNames=new Set(deployed.map(c=>c.name));
+          const missing=[...expectedNames].filter(name=>!deployedNames.has(name));
+          if(!missing.length){
+            registered++;
+            registeredCommands += deployed.size;
+            console.log('[Project One] Individual slash registration verified '+deployed.size+'/'+commandData.length+' commands in guild '+guild.id+'.');
+          } else {
+            console.error('[Commands] Verified command set is missing '+missing.length+' command(s) in guild '+guild.id+': '+missing.join(', '));
+          }
+        } catch(fetchError) {
+          console.error('[Commands] Could not verify guild command set for '+guild.id+': '+(fetchError?.message||fetchError));
         }
       }
     }
@@ -655,11 +668,11 @@ client.once('ready',async()=>{
     }
 
     if(!registered && !client.guilds.cache.size){
-      await client.application.commands.set(commandData);
-      console.log('[Project One] No guild cache available; registered '+commandData.length+' global slash commands.');
+      const deployed=await client.application.commands.set(commandData);
+      console.log('[Project One] No guild cache available; registered and verified '+deployed.size+'/'+commandData.length+' global slash commands.');
     }
 
-    console.log('[Project One] Slash command deployment finished: '+registered+'/'+client.guilds.cache.size+' guild(s), '+registeredCommands+' command registrations.');
+    console.log('[Project One] Slash command deployment finished: '+registered+'/'+client.guilds.cache.size+' guild(s), '+registeredCommands+' verified command registrations.');
   } catch(e) {
     console.error('[Commands] Slash command deployment failed:',e?.stack||e);
   }
