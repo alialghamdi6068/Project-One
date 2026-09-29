@@ -19,6 +19,7 @@ for (const marker of [
   "for(const guild of client.guilds.cache.values())",
   "await guild.commands.set(commandData)",
   "await guild.commands.fetch()",
+  "command.options=[...command.options].sort((a,b)=>Number(Boolean(b.required))-Number(Boolean(a.required)))",
   "slash commands deployed and verified",
   "Slash deployment finished",
   "GatewayIntentBits.GuildVoiceStates",
