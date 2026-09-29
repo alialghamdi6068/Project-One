@@ -89,6 +89,15 @@ if (!source.includes("config.permissions.ownerBypass && owner(i.user.id)")) {
 if (!source.includes("Bulk slash registration failed")) {
   throw new Error('Individual slash registration fallback is missing');
 }
+if (!source.includes("Discord returned an incomplete command set")) {
+  throw new Error('Post-registration slash command verification is missing');
+}
+if (!source.includes("await guild.commands.fetch()")) {
+  throw new Error('Fallback slash command verification is missing');
+}
+if (!source.includes("Registered and verified")) {
+  throw new Error('Successful slash command verification log is missing');
+}
 if (!source.includes("labels[type] ||")) {
   throw new Error('Custom ticket type labels are not supported');
 }
