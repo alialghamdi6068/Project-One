@@ -429,9 +429,14 @@ add(new SlashCommandBuilder().setName('level-reward').setDescription('Set a leve
     const gd=guildData(i.guild.id);gd.levelRewards??={};gd.levelRewards[String(i.options.getInteger('level'))]=i.options.getRole('role').id;save();await i.reply('تم حفظ مكافأة المستوى.');
 });
 
-const ticketButtons = type => new ActionRowBuilder().addComponents(
-  new ButtonBuilder().setCustomId('ticket:create:'+type).setLabel({support:'Support',bug:'Bug Report',partnership:'Partnership',developer:'Developer Support'}[type]).setEmoji({support:'🎫',bug:'🐛',partnership:'🤝',developer:'🛠️'}[type]).setStyle(ButtonStyle.Primary)
-);
+const ticketButtons = type => {
+  const labels = {support:'Support',bug:'Bug Report',partnership:'Partnership',developer:'Developer Support'};
+  const emojis = {support:'🎫',bug:'🐛',partnership:'🤝',developer:'🛠️'};
+  const label = labels[type] || String(type).replace(/[-_]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase()).slice(0,80) || 'Support';
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket:create:'+type).setLabel(label).setEmoji(emojis[type] || '🎫').setStyle(ButtonStyle.Primary)
+  );
+};
 add(new SlashCommandBuilder().setName('ticket-add').setDescription('Add a member to the current ticket').setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)), async i=>{
   const d=db.tickets[i.channel.id]; if(!d||d.status!=='open')return commandError(i,'هذه ليست تذكرة مفتوحة.');
   const m=await fetchMember(i.guild,i.options.getUser('user').id); if(!m)return commandError(i,'العضو غير موجود.');
@@ -514,7 +519,7 @@ add(new SlashCommandBuilder().setName('afk').setDescription('Set or clear AFK').
 });
 
 
-add(new SlashCommandBuilder().setName('bot-info').setDescription('Show bot status and system information'), async i=>{await i.reply({embeds:[embed('Project One — System Status','**Servers:** '+i.client.guilds.cache.size+'\n**Commands:** '+commands.length+'\\n**Latency:** '+i.client.ws.ping+'ms\\n**Node:** '+process.version+'\\n**Uptime:** '+Math.floor(process.uptime()/60)+' minutes',config.colors.info)]});});
+add(new SlashCommandBuilder().setName('bot-info').setDescription('Show bot status and system information'), async i=>{await i.reply({embeds:[embed('Project One — System Status','**Servers:** '+i.client.guilds.cache.size+'\n**Commands:** '+commands.length+'\n**Latency:** '+i.client.ws.ping+'ms\n**Node:** '+process.version+'\n**Uptime:** '+Math.floor(process.uptime()/60)+' minutes',config.colors.info)]});});
 add(new SlashCommandBuilder().setName('protection-whitelist').setDescription('Manage protection whitelist').setDefaultMemberPermissions(PermissionFlagsBits.Administrator).addStringOption(o=>o.setName('action').setDescription('add/remove').setRequired(true).addChoices({name:'add',value:'add'},{name:'remove',value:'remove'})).addUserOption(o=>o.setName('user').setDescription('User').setRequired(true)), async i=>{const u=i.options.getUser('user'),a=i.options.getString('action'),s=guildData(i.guild.id).settings;s.protectionWhitelist??=[];if(a==='add'&&!s.protectionWhitelist.includes(u.id))s.protectionWhitelist.push(u.id);if(a==='remove')s.protectionWhitelist=s.protectionWhitelist.filter(x=>x!==u.id);save();await i.reply('تم تحديث قائمة الحماية.');});
 add(new SlashCommandBuilder().setName('reminders').setDescription('List your reminders'), async i=>{const x=db.reminders.filter(r=>r.guildId===i.guild.id&&r.userId===i.user.id);await i.reply({embeds:[embed('Reminders',x.length?x.map(r=>'• '+r.text+' — <t:'+Math.floor(r.at/1000)+':R>').join('\\n'):'لا توجد تذكيرات.')]});});
 add(new SlashCommandBuilder().setName('giveaway-end').setDescription('End a giveaway').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addStringOption(o=>o.setName('message_id').setDescription('Giveaway message ID').setRequired(true)), async i=>{const id=i.options.getString('message_id'),g=db.giveaways[id];if(!g||g.guildId!==i.guild.id)return commandError(i,'السحب غير موجود.');g.ends=0;save();await i.reply('تم إنهاء السحب، وستظهر النتيجة قريبًا.');});
@@ -625,10 +630,11 @@ client.once('ready',async()=>{
 
 client.on('guildMemberAdd',async m=>{
   const s=guildData(m.guild.id).settings;
-  if(config.protection.antiBot.enabled&&m.user.bot&&!whitelisted(m)){await m.kick('Anti-Bot').catch(()=>{});await sendLog(m.guild,'protection','Anti-Bot removed '+m.user.tag,config.colors.warning);return;}
+  const protection=protectionFor(m.guild);
+  if(protection.enabled&&protection.antiBot.enabled&&m.user.bot&&!whitelisted(m)){await m.kick('Anti-Bot').catch(()=>{});await sendLog(m.guild,'protection','Anti-Bot removed '+m.user.tag,config.colors.warning);return;}
   if((s.autoroleEnabled??config.autorole.enabled)&& (s.autoroleRoleId||config.autorole.roleId))await m.roles.add(s.autoroleRoleId||config.autorole.roleId).catch(()=>{});
   if(s.welcomeEnabled??config.welcome.enabled){const c=m.guild.channels.cache.get(s.welcomeChannelId||config.welcome.channelId);if(c?.isTextBased())await c.send((s.welcomeMessage||config.welcome.message).replaceAll('{user}',m.toString()).replaceAll('{server}',m.guild.name)).catch(()=>{});}
-  const raid=protectionFor(m.guild).raid;if(protectionFor(m.guild).enabled&&raid.enabled){const now=Date.now(),a=(joins.get(m.guild.id)||[]).filter(t=>now-t<raid.windowMs);a.push(now);joins.set(m.guild.id,a);if(a.length>=raid.joins){guildData(m.guild.id).settings.raidMode=true;if(raid.lockdown)for(const c of m.guild.channels.cache.values())if(c.type===ChannelType.GuildText)await c.permissionOverwrites.edit(m.guild.roles.everyone,{SendMessages:false}).catch(()=>{});await m.timeout(raid.timeoutMs,'Anti-Raid').catch(()=>{});await sendLog(m.guild,'protection','Anti-Raid threshold reached: '+a.length+' joins.',config.colors.danger);}}
+  const raid=protection.raid;if(protection.enabled&&raid.enabled){const now=Date.now(),a=(joins.get(m.guild.id)||[]).filter(t=>now-t<raid.windowMs);a.push(now);joins.set(m.guild.id,a);if(a.length>=raid.joins){guildData(m.guild.id).settings.raidMode=true;if(raid.lockdown)for(const c of m.guild.channels.cache.values())if(c.type===ChannelType.GuildText)await c.permissionOverwrites.edit(m.guild.roles.everyone,{SendMessages:false}).catch(()=>{});await m.timeout(raid.timeoutMs,'Anti-Raid').catch(()=>{});await sendLog(m.guild,'protection','Anti-Raid threshold reached: '+a.length+' joins.',config.colors.danger);}}
   await sendLog(m.guild,'memberJoin','Member joined: '+m.user.tag);
 });
 client.on('guildMemberRemove',async m=>{const s=guildData(m.guild.id).settings;if(s.goodbyeEnabled??config.goodbye.enabled){const c=m.guild.channels.cache.get(s.goodbyeChannelId||config.goodbye.channelId);if(c?.isTextBased())await c.send((s.goodbyeMessage||config.goodbye.message).replaceAll('{user}',m.user.toString()).replaceAll('{server}',m.guild.name)).catch(()=>{});}await sendLog(m.guild,'memberLeave','Member left: '+m.user.tag);});
@@ -659,7 +665,7 @@ client.on('webhooksUpdate',async c=>{if(c.guild)await sendLog(c.guild,'webhook',
 client.on('guildBanAdd',async b=>{await antiNuke(b.guild,22,b.user.id,'MEMBER_BAN_ADD');});
 client.on('messageDelete',async m=>{if(m.guild)await sendLog(m.guild,'messageDelete','Message deleted in #'+(m.channel?.name||'unknown')+(m.author?' by '+m.author.tag:''),config.colors.warning);});
 client.on('messageUpdate',async(a,b)=>{if(b.guild&&a.content!==b.content)await sendLog(b.guild,'messageUpdate','Message edited in #'+(b.channel?.name||'unknown'),config.colors.warning);});
-client.on('voiceStateUpdate',async(a,b)=>{if(b.guild&&a.channelId!==b.channelId)await sendLog(b.guild,'voice','Voice state changed for '+b.member.user.tag);});
+client.on('voiceStateUpdate',async(a,b)=>{if(b.guild&&a.channelId!==b.channelId)await sendLog(b.guild,'voice','Voice state changed for '+(b.member?.user?.tag||b.id));});
 
 client.on('messageCreate',async m=>{
   if(!m.guild||m.author.bot)return;
