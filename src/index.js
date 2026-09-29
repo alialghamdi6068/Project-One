@@ -615,67 +615,62 @@ client.once('ready',async()=>{
   const commandData=commands.map(c=>c.data.toJSON());
   console.log('[Project One] Preparing '+commandData.length+' slash commands.');
   try {
-    // Register commands per guild. Default Discord command permissions are cleared
-    // above so every command is visible; permission checks are enforced in guardedRun.
+    // Hard-reset and bulk-replace the guild command set. This removes stale commands
+    // instead of leaving an old partial set behind when a previous deployment failed.
     let registered=0;
     let registeredCommands=0;
     const expectedNames=new Set(commandData.map(c=>c.name));
+
     for(const guild of client.guilds.cache.values()){
       try {
-        const deployed=await guild.commands.set(commandData);
+        await guild.commands.set([]);
+        const deployed=await client.application.commands.set(commandData, guild.id);
         const deployedNames=new Set(deployed.map(c=>c.name));
         const missing=[...expectedNames].filter(name=>!deployedNames.has(name));
-        if(missing.length){
-          throw new Error('Discord returned an incomplete command set: missing '+missing.join(', '));
+        if(missing.length!==0 || deployed.size!==commandData.length){
+          throw new Error('Guild command deployment incomplete: '+deployed.size+'/'+commandData.length+'; missing '+(missing.join(', ')||'none'));
         }
         registered++;
-        registeredCommands += deployed.size;
-        console.log('[Project One] Registered and verified '+deployed.size+'/'+commandData.length+' slash commands in guild '+guild.id+' ('+guild.name+').');
-      } catch(e) {
-        console.error('[Commands] Bulk slash registration failed in guild '+guild.id+' ('+guild.name+'): '+(e?.message||e));
-        let individual=0;
+        registeredCommands+=deployed.size;
+        console.log('[Project One] Guild '+guild.id+' command set replaced: '+deployed.size+'/'+commandData.length);
+      } catch(e){
+        console.error('[Commands] Guild '+guild.id+' deployment failed: '+(e?.stack||e));
+        // If the bulk overwrite is rejected, create each command independently so
+        // one bad registration cannot leave the bot with only a few stale commands.
+        try { await guild.commands.set([]); } catch {}
+        let created=0;
         for(const data of commandData){
           try {
-            await guild.commands.create(data);
-            individual++;
+            await client.application.commands.create(data, guild.id);
+            created++;
           } catch(commandError){
-            console.error('[Commands] Failed to register /'+data.name+' in guild '+guild.id+': '+(commandError?.message||commandError));
+            console.error('[Commands] /'+data.name+' failed: '+(commandError?.message||commandError));
           }
         }
-        try {
-          const deployed=await guild.commands.fetch();
-          const deployedNames=new Set(deployed.map(c=>c.name));
-          const missing=[...expectedNames].filter(name=>!deployedNames.has(name));
-          if(!missing.length){
-            registered++;
-            registeredCommands += deployed.size;
-            console.log('[Project One] Individual slash registration verified '+deployed.size+'/'+commandData.length+' commands in guild '+guild.id+'.');
-          } else {
-            console.error('[Commands] Verified command set is missing '+missing.length+' command(s) in guild '+guild.id+': '+missing.join(', '));
-          }
-        } catch(fetchError) {
-          console.error('[Commands] Could not verify guild command set for '+guild.id+': '+(fetchError?.message||fetchError));
+        const deployed=await client.application.commands.fetch({guildId:guild.id}).catch(()=>null);
+        const deployedNames=new Set(deployed?.map(c=>c.name)||[]);
+        const missing=[...expectedNames].filter(name=>!deployedNames.has(name));
+        if(deployed && !missing.length && deployed.size===commandData.length){
+          registered++;
+          registeredCommands+=deployed.size;
+          console.log('[Project One] Guild '+guild.id+' individual registration completed: '+deployed.size+'/'+commandData.length);
+        } else {
+          console.error('[Commands] Guild '+guild.id+' still has '+(deployed?.size||0)+'/'+commandData.length+' commands; missing '+missing.join(', '));
         }
       }
     }
 
-    // Keep a global command set as a fallback. Guild commands are preferred because
-    // they propagate immediately; global commands protect against a guild-registration
-    // failure and also make the full command set available after Discord propagation.
+    // Global commands are kept in sync as well, but guild commands above are the
+    // authoritative immediate command set.
     try {
       const globalDeployed=await client.application.commands.set(commandData);
-      const globalNames=new Set(globalDeployed.map(c=>c.name));
-      const globalMissing=[...expectedNames].filter(name=>!globalNames.has(name));
-      if(globalMissing.length) {
-        console.error('[Commands] Global command set is incomplete: '+globalMissing.join(', '));
-      } else {
-        console.log('[Project One] Global slash command set verified: '+globalDeployed.size+'/'+commandData.length+'.');
-      }
+      console.log('[Project One] Global command set synced: '+globalDeployed.size+'/'+commandData.length);
     } catch(e) {
-      console.error('[Commands] Global slash registration failed: '+(e?.message||e));
+      console.warn('[Commands] Global sync failed: '+(e?.message||e));
     }
 
-    console.log('[Project One] Slash command deployment finished: '+registered+'/'+client.guilds.cache.size+' guild(s), '+registeredCommands+' verified command registrations.');
+    console.log('[Project One] Slash command deployment finished: '+registered+'/'+client.guilds.cache.size+' guild(s), '+registeredCommands+' verified registrations.');
+
   } catch(e) {
     console.error('[Commands] Slash command deployment failed:',e?.stack||e);
   }
