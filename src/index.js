@@ -113,7 +113,26 @@ async function punish(member, action, reason) {
 }
 
 const commands = [];
-const add = (data, run) => commands.push({ data, run });
+const add = (data, run) => {
+  const json = data.toJSON();
+  const requiredPermissions = json.default_member_permissions;
+  // Discord uses default_member_permissions to hide commands from users who lack
+  // the permission. Project One enforces permissions itself so owner bypass and
+  // custom permission rules can work consistently across slash/prefix commands.
+  if (requiredPermissions !== undefined && requiredPermissions !== null) {
+    data.setDefaultMemberPermissions(null);
+  }
+  const guardedRun = async i => {
+    if (requiredPermissions !== undefined && requiredPermissions !== null && i.inGuild?.()) {
+      const required = BigInt(requiredPermissions);
+      const bypass = config.permissions.ownerBypass && owner(i.user.id);
+      const hasPermission = bypass || (i.member?.permissions?.has?.(required) ?? false);
+      if (!hasPermission) return commandError(i, 'ما عندك الصلاحية المطلوبة لاستخدام هذا الأمر.');
+    }
+    return run(i);
+  };
+  commands.push({ data, run: guardedRun });
+};
 
 add(new SlashCommandBuilder().setName('ping').setDescription('Show bot latency'), async i => i.reply('Pong! ' + i.client.ws.ping + 'ms'));
 add(new SlashCommandBuilder().setName('help').setDescription('Interactive command center'), async i => i.reply({ embeds: [embed('Project One — Command Center', [
@@ -596,16 +615,34 @@ client.once('ready',async()=>{
   const commandData=commands.map(c=>c.data.toJSON());
   console.log('[Project One] Preparing '+commandData.length+' slash commands.');
   try {
-    // Always deploy directly to every guild the bot can access. This avoids stale
-    // global commands and avoids relying on a possibly outdated GUILD_ID value.
+    // Register commands per guild. Default Discord command permissions are cleared
+    // above so every command is visible; permission checks are enforced in guardedRun.
     let registered=0;
+    let registeredCommands=0;
     for(const guild of client.guilds.cache.values()){
       try {
         await guild.commands.set(commandData);
         registered++;
+        registeredCommands += commandData.length;
         console.log('[Project One] Registered '+commandData.length+' slash commands in guild '+guild.id+' ('+guild.name+').');
       } catch(e) {
-        console.error('[Commands] Failed to register commands in guild '+guild.id+' ('+guild.name+'):',e?.stack||e);
+        console.error('[Commands] Bulk slash registration failed in guild '+guild.id+' ('+guild.name+'): '+(e?.message||e));
+        let individual=0;
+        for(const data of commandData){
+          try {
+            await guild.commands.create(data);
+            individual++;
+          } catch(commandError){
+            console.error('[Commands] Failed to register /'+data.name+' in guild '+guild.id+': '+(commandError?.message||commandError));
+          }
+        }
+        if(individual===commandData.length){
+          registered++;
+          registeredCommands += individual;
+          console.log('[Project One] Individual slash registration recovered '+individual+' commands in guild '+guild.id+'.');
+        } else {
+          console.error('[Commands] Individual fallback registered '+individual+'/'+commandData.length+' commands in guild '+guild.id+'.');
+        }
       }
     }
 
@@ -622,7 +659,7 @@ client.once('ready',async()=>{
       console.log('[Project One] No guild cache available; registered '+commandData.length+' global slash commands.');
     }
 
-    console.log('[Project One] Slash command deployment finished: '+registered+'/'+client.guilds.cache.size+' guild(s). '+commandData.length+' command(s) each.');
+    console.log('[Project One] Slash command deployment finished: '+registered+'/'+client.guilds.cache.size+' guild(s), '+registeredCommands+' command registrations.');
   } catch(e) {
     console.error('[Commands] Slash command deployment failed:',e?.stack||e);
   }
