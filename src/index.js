@@ -564,12 +564,21 @@ const client=new Client({
 });
 
 function verifyGatewayIntents() {
-  const enabled = client.options.intents.bitfield;
-  const missing = REQUIRED_INTENTS.filter(([,intent]) => !enabled.has(intent));
+  // discord.js v14 stores the resolved GatewayIntentBits as a BitField.
+  // Do not assume the underlying bitfield exposes .has(); use BitField#has
+  // when available and fall back to a bigint bitwise check for compatibility.
+  const enabled = client.options.intents;
+  const hasIntent = intent => typeof enabled?.has === 'function'
+    ? enabled.has(intent)
+    : (BigInt(enabled?.bitfield ?? enabled ?? 0) & BigInt(intent)) === BigInt(intent);
+
+  const missing = REQUIRED_INTENTS.filter(([,intent]) => !hasIntent(intent));
   if (missing.length) {
     throw new Error('[Discord] Missing Gateway Intents: '+missing.map(([name])=>name).join(', '));
   }
-  const privileged = REQUIRED_INTENTS.filter(([,intent,privileged]) => privileged && enabled.has(intent)).map(([name])=>name);
+  const privileged = REQUIRED_INTENTS
+    .filter(([,intent,privileged]) => privileged && hasIntent(intent))
+    .map(([name])=>name);
   console.log('[Discord] Gateway Intents OK: '+REQUIRED_INTENTS.map(([name])=>name).join(', '));
   console.log('[Discord] Privileged intents required in Developer Portal: '+privileged.join(', '));
 }
