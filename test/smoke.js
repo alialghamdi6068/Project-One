@@ -62,6 +62,25 @@ for (const name of generatedCommands) {
     throw new Error('Generated command definition missing: ' + name);
   }
 }
+if (!source.includes("GatewayIntentBits.GuildVoiceStates")) {
+  throw new Error('GuildVoiceStates intent is missing');
+}
+if (source.includes("GatewayIntentBits.GuildPresences")) {
+  throw new Error('Unused GuildPresences intent should not be requested');
+}
+if (!source.includes("verifyGatewayIntents()")) {
+  throw new Error('Gateway intent verification is missing');
+}
+if (!source.includes("protection.antiBot.enabled")) {
+  throw new Error('Anti-Bot protection path is missing');
+}
+if (!source.includes("const protection=protectionFor(m.guild)")) {
+  throw new Error('Per-guild protection configuration is missing from member join handling');
+}
+if (!source.includes("labels[type] ||")) {
+  throw new Error('Custom ticket type labels are not supported');
+}
+
 if (!source.includes("getUser:n=>values[n]?.user??values[n]??null")) {
   throw new Error('Prefix user option adapter is broken');
 }
